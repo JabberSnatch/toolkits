@@ -3,8 +3,48 @@
 #include <iostream>
 #include <vector>
 
+struct HuffmannTable
+{
+    static constexpr uint32_t kInvalidValue = ~0u;
+    using ValueContainer = std::array<uint32_t, 256>;
+    ValueContainer primary;
+    std::vector<ValueContainer> secondary = {};
+
+    HuffmannTable() {
+        for (uint32_t& v : primary)
+            v = kInvalidValue;
+    }
+
+    void InsertValue(uint16_t key, uint8_t size, uint32_t value)
+    {
+        if (size > 8)//(key & 0xff00) != 0)
+        {
+            uint32_t primary_key = key >> (size-8);
+            uint32_t primary_value = primary[primary_key];
+            //uint32_t primary_value = primary[key&0xff];
+            if (primary_value == kInvalidValue)
+            {
+                uint32_t secondary_index = (uint32_t)secondary.size();
+                secondary.emplace_back();
+                ValueContainer& values = secondary.back();
+                for (uint32_t& v : values)
+                    v = kInvalidValue;
+                primary_value = 0x10000000 | secondary_index;
+                primary[primary_key] = primary_value;
+            }
+
+            uint32_t secondary_key = key & ((1<<(size-8))-1);
+            secondary[primary_value & ~0x10000000][secondary_key] = value;
+        }
+        else
+            primary[key] = value;
+    }
+};
+
 std::vector<uint64_t> GenerateHuffmannTable(std::vector<uint32_t> const &sizes)
 {
+    HuffmannTable table{};
+
     // From DEFLATE specifications
     std::vector<uint32_t> counts{};
     for (uint32_t size : sizes)
@@ -33,6 +73,7 @@ std::vector<uint64_t> GenerateHuffmannTable(std::vector<uint32_t> const &sizes)
         else
         {
             codes.push_back(next_code[size]);
+            table.InsertValue((uint16_t)next_code[size], size, size);
             ++next_code[size];
         }
     }
@@ -54,11 +95,11 @@ std::uint32_t UnpackBytes(std::uint32_t count, std::uint8_t const*& stream)
     if (count > 0)
         output |= *stream++;
     if (count > 1)
-        output = (output << 8) | *stream++;
+        output |= ((uint32_t)*stream++ << 8);
     if (count > 2)
-        output = (output << 8) | *stream++;
+        output |= ((uint32_t)*stream++ << 16);
     if (count > 3)
-        output = (output << 8) | *stream++;
+        output |= ((uint32_t)*stream++ << 24);
     return output;
 }
 
@@ -74,7 +115,7 @@ std::uint32_t UnpackBits(std::uint32_t count, std::uint8_t const*& stream, std::
     std::uint32_t v = 0;
     if (head != 0)
     {
-        v |= ((*stream >> offset) & ((1 << head)-1)) << (tail + body);
+        v |= ((*stream >> offset) & ((1 << head)-1));
         offset += head;
         if (offset > 7)
         {
@@ -84,11 +125,11 @@ std::uint32_t UnpackBits(std::uint32_t count, std::uint8_t const*& stream, std::
     }
 
     if (body != 0)
-        v |= UnpackBytes(body/8, stream) << tail;
+        v |= UnpackBytes(body/8, stream) << head;
 
     if (tail != 0)
     {
-        v |= (*stream & ((1 << tail)-1));
+        v |= (*stream & ((1 << tail)-1)) << (head + body);
         offset += tail;
     }
 
