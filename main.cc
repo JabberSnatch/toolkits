@@ -17,11 +17,10 @@ struct HuffmannTable
 
     void InsertValue(uint16_t key, uint8_t size, uint32_t value)
     {
-        if (size > 8)//(key & 0xff00) != 0)
+        if (size > 8)
         {
             uint32_t primary_key = key >> (size-8);
             uint32_t primary_value = primary[primary_key];
-            //uint32_t primary_value = primary[key&0xff];
             if (primary_value == kInvalidValue)
             {
                 uint32_t secondary_index = (uint32_t)secondary.size();
@@ -33,11 +32,16 @@ struct HuffmannTable
                 primary[primary_key] = primary_value;
             }
 
-            uint32_t secondary_key = key & ((1<<(size-8))-1);
-            secondary[primary_value & ~0x10000000][secondary_key] = value;
+            uint32_t secondary_key = (key & ((1<<(size-8))-1)) << (16-size);
+            for (uint32_t index = 0; index < (1 << (16 - size)); ++index)
+                secondary[primary_value & ~0x10000000][secondary_key++] = value;
         }
         else
-            primary[key] = value;
+        {
+            uint32_t shifted_key = key << (8 - size);
+            for (uint32_t index = 0; index < (1 << (8 - size)); ++index)
+                primary[shifted_key++] = value;
+        }
     }
 };
 
@@ -73,7 +77,7 @@ std::vector<uint64_t> GenerateHuffmannTable(std::vector<uint32_t> const &sizes)
         else
         {
             codes.push_back(next_code[size]);
-            table.InsertValue((uint16_t)next_code[size], size, size);
+            table.InsertValue((uint16_t)next_code[size], size, next_code[size]);
             ++next_code[size];
         }
     }
@@ -227,19 +231,28 @@ void inflate(std::uint8_t const* stream)
 
 int main(int argc, char const** argv)
 {
-    std::vector<uint64_t> fixed_codes = [](){
-        std::vector<uint32_t> sizes{};
-        sizes.reserve(288);
-        for (int index = 0; index < 144; ++index)
-            sizes.push_back(8);
-        for (int index = 144; index < 256; ++index)
-            sizes.push_back(9);
-        for (int index = 256; index < 280; ++index)
-            sizes.push_back(7);
-        for (int index = 280; index < 288; ++index)
-            sizes.push_back(8);
-        return GenerateHuffmannTable(sizes);
-    }();
+#if 0
+    {
+        std::vector<uint64_t> fixed_codes = [](){
+            std::vector<uint32_t> sizes{};
+            sizes.reserve(288);
+            for (int index = 0; index < 144; ++index)
+                sizes.push_back(8);
+            for (int index = 144; index < 256; ++index)
+                sizes.push_back(9);
+            for (int index = 256; index < 280; ++index)
+                sizes.push_back(7);
+            for (int index = 280; index < 288; ++index)
+                sizes.push_back(8);
+            return GenerateHuffmannTable(sizes);
+        }();
+    }
+#endif
+
+    {
+        std::vector<uint64_t> fixed_codes = GenerateHuffmannTable({ 13, 14, 12, 2, 2, 11, 13 });
+        std::cout << std::endl;
+    }
 
 #if 0
     uint64_t unpacktest = 0xdeadbeefdeadbeef;
