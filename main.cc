@@ -459,8 +459,8 @@ void inflate(std::uint8_t const* stream)
                     {
                         uint32_t length = 0;
                         {
-                            uint32_t const base = kLengthBase[litlen_entry.value - 256];
-                            uint32_t const extra_bits = kLengthExtraBits[litlen_entry.value - 256];
+                            uint32_t const base = kLengthBase[litlen_entry.value - 257];
+                            uint32_t const extra_bits = kLengthExtraBits[litlen_entry.value - 257];
                             length = base + UnpackBits(extra_bits, stream, offset);
                         }
 
@@ -475,11 +475,10 @@ void inflate(std::uint8_t const* stream)
                             distance = base + UnpackBits(extra_bits, stream, offset);
                         }
 
+                        uint32_t begin = output_stream.size()-distance;
                         for (uint32_t byte_index = 0; byte_index < length; ++byte_index)
                             output_stream.push_back(
-                                output_stream[output_stream.size()-1-distance+byte_index]);
-
-                        int i = 0;
+                                output_stream[begin+byte_index]);
                     }
                 }
             }
