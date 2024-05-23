@@ -149,6 +149,20 @@ std::uint32_t UnpackBytes(std::uint32_t count, std::uint8_t const*& stream)
     return output;
 }
 
+std::uint32_t UnpackBytesBE(std::uint32_t count, std::uint8_t const*& stream)
+{
+    std::uint32_t output = 0;
+    if (count > 0)
+        output |= *stream++;
+    if (count > 1)
+        output = (output << 8) | *stream++;
+    if (count > 2)
+        output = (output << 8) | *stream++;
+    if (count > 3)
+        output = (output << 8) | *stream++;
+    return output;
+}
+
 void AdvanceBits(std::uint32_t count, std::uint8_t const*& stream, std::uint32_t& offset)
 {
     std::uint32_t head = std::min(8 - offset, count)%8;
@@ -242,7 +256,7 @@ struct GZipHeader
     uint8_t os_id;
 };
 
-void inflate(std::uint8_t const* stream)
+std::vector<uint8_t> inflate(std::uint8_t const* stream)
 {
     std::vector<uint8_t> output_stream = {};
     std::uint8_t const* base = stream;
@@ -497,8 +511,41 @@ void inflate(std::uint8_t const* stream)
     }
     std::cout << std::endl;
 
-    return;
+    return output_stream;
 }
+
+enum NBTTag
+{
+    TAG_End = 0,
+    TAG_Byte = 1,
+    TAG_Short = 2,
+    TAG_Int = 3,
+    TAG_Long = 4,
+    TAG_Float = 5,
+    TAG_Double = 6,
+    TAG_Byte_Array = 7,
+    TAG_String = 8,
+    TAG_List = 9,
+    TAG_Compound = 10,
+    TAG_Int_Array = 11,
+    TAG_Long_Array = 12,
+};
+
+struct NBTField
+{
+    NBTTag type;
+    std::string name;
+    union {
+        int8_t nbt_byte;
+        int16_t nbt_short;
+        int32_t nbt_int;
+        int64_t nbt_long;
+        float nbt_float;
+        double nbt_double;
+        //std::string nbt_string;
+        //std::vector<NBTField> nbt_compound;
+    } payload;
+};
 
 int main(int argc, char const** argv)
 {
@@ -536,73 +583,6 @@ int main(int argc, char const** argv)
     }
 #endif
 
-#if 0
-    uint64_t unpacktest = 0xdeadbeefdeadbeef;
-    {
-        uint8_t const* stream = (uint8_t const*)&unpacktest;
-        uint32_t offset = 0;
-        uint32_t unpack = UnpackBits(15, stream, offset);
-        std::cout << std::hex << unpack << ":" << std::dec << offset << std::endl;
-    }
-
-    {
-        uint8_t const* stream = (uint8_t const*)&unpacktest;
-        uint32_t offset = 0;
-        uint32_t unpack = UnpackBits(7, stream, offset);
-        std::cout << std::hex << unpack << ":" << std::dec << offset << std::endl;
-    }
-
-    {
-        uint8_t const* stream = (uint8_t const*)&unpacktest;
-        uint32_t offset = 1;
-        uint32_t unpack = UnpackBits(5, stream, offset);
-        std::cout << std::hex << unpack << ":" << std::dec << offset << std::endl;
-    }
-
-    {
-        uint8_t const* stream = (uint8_t const*)&unpacktest;
-        uint32_t offset = 4;
-        uint32_t unpack = UnpackBits(4, stream, offset);
-        std::cout << std::hex << unpack << ":" << std::dec << offset << std::endl;
-    }
-
-    {
-        uint8_t const* stream = (uint8_t const*)&unpacktest;
-        uint32_t offset = 4;
-        uint32_t unpack = UnpackBits(1, stream, offset);
-        std::cout << std::hex << unpack << ":" << std::dec << offset << std::endl;
-    }
-
-    {
-        uint8_t const* stream = (uint8_t const*)&unpacktest;
-        uint32_t offset = 4;
-        uint32_t unpack = UnpackBits(32, stream, offset);
-        std::cout << std::hex << unpack << ":" << std::dec << offset << std::endl;
-    }
-
-    {
-        uint8_t const* stream = (uint8_t const*) &unpacktest;
-        uint32_t offset = 0;
-        uint32_t unpack = UnpackBits(32, stream, offset);
-        std::cout << std::hex << unpack << ":" << std::dec << offset << std::endl;
-    }
-#endif
-
-    /*
-      1 0000 0000 -> EOF
-      1 0000 0001 -> 3
-      1 0000 0010 -> 4
-      ...
-      1 0000 1000 -> 10
-      1 0000 1001 0 -> 11
-      1 0000 1001 1 -> 12
-      1 0000 1010 0 -> 13
-      ...
-      1 0000 1100 1 -> 18
-      ...
-      1 0111 0001 -> 258
-    */
-
     if (argc == 2)
     {
         std::FILE* file = std::fopen(argv[1], "rb");
@@ -613,7 +593,84 @@ int main(int argc, char const** argv)
         std::fread(contents.data(), 1, size, file);
         std::fclose(file);
 
-        inflate((std::uint8_t const*)contents.data());
+        std::vector<uint8_t> output_stream = inflate((std::uint8_t const*)contents.data());
+
+        uint8_t const* stream = output_stream.data();
+        NBTTag current_field = NBTTag::TAG_End;
+        std::vector<NBTField> field_stack = {};
+        while (stream - output_stream.data() < output_stream.size())
+        {
+            if (current_field == NBTTag::TAG_End)
+                current_field = (NBTTag)*stream++;
+
+            if (current_field == NBTTag::TAG_End)
+            {
+                std::cout << "compound end or something" << std::endl;
+                continue;
+            }
+
+            field_stack.emplace_back();
+            NBTField& field = field_stack.back();
+            field.type = current_field;
+
+            uint32_t name_length = UnpackBytesBE(2, stream);
+            field.name = std::string((char*)stream, name_length);
+            stream += name_length;
+
+            switch (current_field)
+            {
+            case NBTTag::TAG_Byte:
+                UnpackBytesBE(1, stream);
+                current_field = NBTTag::TAG_End;
+                break;
+
+            case NBTTag::TAG_Short:
+                UnpackBytesBE(2, stream);
+                current_field = NBTTag::TAG_End;
+                break;
+
+            case NBTTag::TAG_Int:
+                UnpackBytesBE(4, stream);
+                current_field = NBTTag::TAG_End;
+                break;
+
+            case NBTTag::TAG_Long:
+                UnpackBytesBE(8, stream);
+                current_field = NBTTag::TAG_End;
+                break;
+
+            case NBTTag::TAG_Float:
+                UnpackBytesBE(4, stream);
+                current_field = NBTTag::TAG_End;
+                break;
+
+            case NBTTag::TAG_Double:
+                UnpackBytesBE(8, stream);
+                current_field = NBTTag::TAG_End;
+                break;
+
+            case NBTTag::TAG_Byte_Array:
+                break;
+
+            case NBTTag::TAG_String:
+                break;
+
+            case NBTTag::TAG_List:
+                break;
+
+            case NBTTag::TAG_Compound:
+                current_field = NBTTag::TAG_End;
+                break;
+
+            case NBTTag::TAG_Int_Array:
+                break;
+
+            case NBTTag::TAG_Long_Array:
+                break;
+
+            default: break;
+            }
+        }
         //std::cout << contents << std::endl;
     }
 
