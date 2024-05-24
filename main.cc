@@ -3,6 +3,7 @@
 #include <iostream>
 #include <vector>
 #include <bitset>
+#include <functional>
 
 struct HuffmannTable
 {
@@ -149,9 +150,9 @@ std::uint32_t UnpackBytes(std::uint32_t count, std::uint8_t const*& stream)
     return output;
 }
 
-std::uint32_t UnpackBytesBE(std::uint32_t count, std::uint8_t const*& stream)
+std::uint64_t UnpackBytesBE(std::uint32_t count, std::uint8_t const*& stream)
 {
-    std::uint32_t output = 0;
+    std::uint64_t output = 0;
     if (count > 0)
         output |= *stream++;
     if (count > 1)
@@ -159,6 +160,14 @@ std::uint32_t UnpackBytesBE(std::uint32_t count, std::uint8_t const*& stream)
     if (count > 2)
         output = (output << 8) | *stream++;
     if (count > 3)
+        output = (output << 8) | *stream++;
+    if (count > 4)
+        output = (output << 8) | *stream++;
+    if (count > 5)
+        output = (output << 8) | *stream++;
+    if (count > 6)
+        output = (output << 8) | *stream++;
+    if (count > 7)
         output = (output << 8) | *stream++;
     return output;
 }
@@ -531,21 +540,185 @@ enum NBTTag
     TAG_Long_Array = 12,
 };
 
+uint32_t NBTTypeSize(NBTTag type);
+void* NBTDataAlloc(NBTTag type, uint32_t count);
+void NBTDataFree(void* alloc);
+
+using NBTDataDeleter = std::function<void(void*)>;
+NBTDataDeleter NBTGetDataDeleter(NBTTag type);
+
 struct NBTField
 {
     NBTTag type;
     std::string name;
-    union {
-        int8_t nbt_byte;
-        int16_t nbt_short;
-        int32_t nbt_int;
-        int64_t nbt_long;
-        float nbt_float;
-        double nbt_double;
-        //std::string nbt_string;
-        //std::vector<NBTField> nbt_compound;
-    } payload;
+    void* payload;
+
+    NBTField() = default;
+    NBTField(NBTField const&) = delete;
+    NBTField const& operator=(NBTField const&) = delete;
+    NBTField(NBTField&& o): type{ o.type }, name{ o.name }, payload{ o.payload }
+    { o.payload = nullptr; }
+    NBTField const& operator=(NBTField&& o) {
+        this->~NBTField();
+        type = o.type;
+        name = o.name;
+        payload = o.payload;
+        o.payload = nullptr;
+        return *this;
+    }
+    ~NBTField()
+    {
+        if (payload)
+        {
+            NBTDataDeleter deleter = NBTGetDataDeleter(type);
+            if (deleter) deleter(payload);
+            NBTDataFree(payload);
+        }
+    }
 };
+
+using NBTCompound = std::vector<NBTField>;
+using NBTByteArray = std::vector<int8_t>;
+using NBTIntArray = std::vector<int32_t>;
+using NBTLongArray = std::vector<int64_t>;
+using NBTString = std::string;
+
+struct NBTList
+{
+    NBTTag type;
+    uint32_t size;
+    void* data;
+
+    NBTList(NBTList const&) = delete;
+    NBTList const& operator=(NBTList const&) = delete;
+    NBTList(NBTList&& o): type{ o.type }, size{ o.size }, data{ o.data }
+    { o.data = nullptr; }
+    NBTList const& operator=(NBTList&& o) {
+        this->~NBTList();
+        type = o.type;
+        size = o.size;
+        data = o.data;
+        o.data = nullptr;
+        return *this;
+    }
+    ~NBTList()
+    {
+        if (data)
+        {
+            NBTDataDeleter deleter = NBTGetDataDeleter(type);
+            if (deleter)
+            {
+                uint32_t type_size = NBTTypeSize(type);
+                uint8_t* element = (uint8_t*)data;
+                for (uint32_t index = 0; index < size; ++index, element += type_size)
+                    deleter(element);
+            }
+            NBTDataFree(data);
+        }
+    }
+};
+
+uint32_t NBTTypeSize(NBTTag type)
+{
+    switch (type)
+    {
+    case TAG_End: return 0;
+    case TAG_Byte: return 1;
+    case TAG_Short: return 2;
+    case TAG_Int: return 4;
+    case TAG_Long: return 8;
+    case TAG_Float: return 4;
+    case TAG_Double: return 8;
+    case TAG_Byte_Array: return sizeof(NBTByteArray);
+    case TAG_String: return sizeof(NBTString);
+    case TAG_List: return sizeof(NBTList);
+    case TAG_Compound: return sizeof(NBTCompound);
+    case TAG_Int_Array: return sizeof(NBTIntArray);
+    case TAG_Long_Array: return sizeof(NBTLongArray);
+    default: return 0;
+    }
+}
+
+void* NBTDataAlloc(NBTTag type, uint32_t count)
+{
+    uint64_t alloc_size = NBTTypeSize(type) * count;
+    return new uint8_t[alloc_size];
+}
+
+NBTDataDeleter NBTGetDataDeleter(NBTTag type)
+{
+    switch (type)
+    {
+    case TAG_Byte_Array: return [](void* alloc){ ((NBTByteArray*)alloc)->~NBTByteArray(); };
+    case TAG_String: return [](void* alloc){ ((NBTString*)alloc)->~NBTString(); };
+    case TAG_List: return [](void* alloc){ ((NBTList*)alloc)->~NBTList(); };
+    case TAG_Compound: return [](void* alloc){ ((NBTCompound*)alloc)->~NBTCompound(); };
+    case TAG_Int_Array: return [](void* alloc){ ((NBTIntArray*)alloc)->~NBTIntArray(); };
+    case TAG_Long_Array: return [](void* alloc){ ((NBTLongArray*)alloc)->~NBTLongArray(); };
+    default: return nullptr;
+    }
+}
+
+void NBTDataFree(void* alloc)
+{
+    delete [] (uint8_t*)alloc;
+}
+
+using FieldStack = std::vector<NBTField>;
+
+void UnpackFieldData(NBTTag type, void* data, uint8_t const* stream)
+{
+    switch (type)
+    {
+    case NBTTag::TAG_Byte:
+        *(int8_t*)data = (int8_t)UnpackBytesBE(1, stream);
+        break;
+
+    case NBTTag::TAG_Short:
+        *(int16_t*)data = (int16_t)UnpackBytesBE(2, stream);
+        break;
+
+    case NBTTag::TAG_Int:
+        *(int32_t*)data = (int32_t)UnpackBytesBE(4, stream);
+        break;
+
+    case NBTTag::TAG_Long:
+        *(int64_t*)data = (int64_t)UnpackBytesBE(8, stream);
+        break;
+
+    case NBTTag::TAG_Float:
+        *(float*)data = (float)UnpackBytesBE(4, stream);
+        break;
+
+    case NBTTag::TAG_Double:
+        *(double*)data = (double)UnpackBytesBE(8, stream);
+        break;
+
+    case NBTTag::TAG_Byte_Array:
+        break;
+
+    case NBTTag::TAG_String:
+        break;
+
+    case NBTTag::TAG_List:
+    {
+        NBTList& list = *(NBTList*)data;
+        NBTTag list_type = (NBTTag)*stream++;
+        int32_t list_length = (int32_t)UnpackBytesBE(4, stream);
+    } break;
+
+    case NBTTag::TAG_Compound:
+        break;
+
+    case NBTTag::TAG_Int_Array:
+        break;
+
+    case NBTTag::TAG_Long_Array:
+        break;
+
+    default: break;
+    }
+}
 
 int main(int argc, char const** argv)
 {
@@ -617,59 +790,9 @@ int main(int argc, char const** argv)
             field.name = std::string((char*)stream, name_length);
             stream += name_length;
 
-            switch (current_field)
-            {
-            case NBTTag::TAG_Byte:
-                UnpackBytesBE(1, stream);
-                current_field = NBTTag::TAG_End;
-                break;
-
-            case NBTTag::TAG_Short:
-                UnpackBytesBE(2, stream);
-                current_field = NBTTag::TAG_End;
-                break;
-
-            case NBTTag::TAG_Int:
-                UnpackBytesBE(4, stream);
-                current_field = NBTTag::TAG_End;
-                break;
-
-            case NBTTag::TAG_Long:
-                UnpackBytesBE(8, stream);
-                current_field = NBTTag::TAG_End;
-                break;
-
-            case NBTTag::TAG_Float:
-                UnpackBytesBE(4, stream);
-                current_field = NBTTag::TAG_End;
-                break;
-
-            case NBTTag::TAG_Double:
-                UnpackBytesBE(8, stream);
-                current_field = NBTTag::TAG_End;
-                break;
-
-            case NBTTag::TAG_Byte_Array:
-                break;
-
-            case NBTTag::TAG_String:
-                break;
-
-            case NBTTag::TAG_List:
-                break;
-
-            case NBTTag::TAG_Compound:
-                current_field = NBTTag::TAG_End;
-                break;
-
-            case NBTTag::TAG_Int_Array:
-                break;
-
-            case NBTTag::TAG_Long_Array:
-                break;
-
-            default: break;
-            }
+            field.payload = NBTDataAlloc(field.type, 1);
+            UnpackFieldData(field.type, field.payload, stream);
+            current_field = TAG_End;
         }
         //std::cout << contents << std::endl;
     }
