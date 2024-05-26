@@ -589,6 +589,7 @@ struct NBTList
     uint32_t size;
     void* data;
 
+    NBTList() = default;
     NBTList(NBTList const&) = delete;
     NBTList const& operator=(NBTList const&) = delete;
     NBTList(NBTList&& o): type{ o.type }, size{ o.size }, data{ o.data }
@@ -664,10 +665,13 @@ void NBTDataFree(void* alloc)
     delete [] (uint8_t*)alloc;
 }
 
-using FieldStack = std::vector<NBTField>;
-
-void UnpackFieldData(NBTTag type, void* data, uint8_t const* stream)
+void UnpackFieldData(NBTTag type, void* data,
+                     uint8_t const* stream_base, size_t stream_length,
+                     uint8_t const*& stream)
 {
+    if (stream - stream_base > stream_length)
+        return;
+
     switch (type)
     {
     case NBTTag::TAG_Byte:
@@ -695,26 +699,83 @@ void UnpackFieldData(NBTTag type, void* data, uint8_t const* stream)
         break;
 
     case NBTTag::TAG_Byte_Array:
-        break;
+    {
+        int32_t size = UnpackBytesBE(4, stream);
+        new (data) NBTByteArray();
+        NBTByteArray& byte_array = *(NBTByteArray*)data;
+        byte_array.reserve((size_t)size);
+        for (int32_t index = 0; index < size; ++index)
+            byte_array.push_back((int8_t)*stream++);
+    } break;
 
     case NBTTag::TAG_String:
-        break;
+    {
+        size_t string_size = (size_t)UnpackBytesBE(2, stream);
+        new (data) std::string((char const*)stream, string_size);
+        stream += string_size;
+    } break;
 
     case NBTTag::TAG_List:
     {
         NBTList& list = *(NBTList*)data;
-        NBTTag list_type = (NBTTag)*stream++;
-        int32_t list_length = (int32_t)UnpackBytesBE(4, stream);
+        list.type = (NBTTag)*stream++;
+        list.size = (int32_t)UnpackBytesBE(4, stream);
+        list.data = NBTDataAlloc(list.type, list.size);
+
+        uint8_t* data = (uint8_t*)list.data;
+        uint32_t element_size = NBTTypeSize(list.type);
+        for (uint32_t index = 0; index < list.size; ++index)
+            UnpackFieldData(list.type, data + element_size*index,
+                            stream_base, stream_length,
+                            stream);
     } break;
 
     case NBTTag::TAG_Compound:
-        break;
+    {
+        new (data) NBTCompound;
+        NBTCompound& compound = *(NBTCompound*)data;
+
+        NBTTag element_type;
+        for (;;)
+        {
+            element_type = (NBTTag)*stream++;
+            if (element_type == NBTTag::TAG_End)
+                break;
+
+            compound.emplace_back();
+            NBTField& field = compound.back();
+            field.type = element_type;
+
+            uint32_t name_length = UnpackBytesBE(2, stream);
+            field.name = std::string((char*)stream, name_length);
+            stream += name_length;
+
+            field.payload = NBTDataAlloc(field.type, 1);
+            UnpackFieldData(field.type, field.payload,
+                            stream_base, stream_length,
+                            stream);
+        }
+    } break;
 
     case NBTTag::TAG_Int_Array:
-        break;
+    {
+        int32_t size = UnpackBytesBE(4, stream);
+        new (data) NBTIntArray();
+        NBTIntArray& int_array = *(NBTIntArray*)data;
+        int_array.reserve((size_t)size);
+        for (int32_t index = 0; index < size; ++index)
+            int_array.push_back((int32_t)UnpackBytesBE(4, stream));
+    } break;
 
     case NBTTag::TAG_Long_Array:
-        break;
+    {
+        int32_t size = UnpackBytesBE(4, stream);
+        new (data) NBTLongArray();
+        NBTLongArray& long_array = *(NBTLongArray*)data;
+        long_array.reserve((size_t)size);
+        for (int32_t index = 0; index < size; ++index)
+            long_array.push_back((int64_t)UnpackBytesBE(8, stream));
+    } break;
 
     default: break;
     }
@@ -770,7 +831,7 @@ int main(int argc, char const** argv)
 
         uint8_t const* stream = output_stream.data();
         NBTTag current_field = NBTTag::TAG_End;
-        std::vector<NBTField> field_stack = {};
+        std::vector<NBTField> field_list = {};
         while (stream - output_stream.data() < output_stream.size())
         {
             if (current_field == NBTTag::TAG_End)
@@ -782,8 +843,8 @@ int main(int argc, char const** argv)
                 continue;
             }
 
-            field_stack.emplace_back();
-            NBTField& field = field_stack.back();
+            field_list.emplace_back();
+            NBTField& field = field_list.back();
             field.type = current_field;
 
             uint32_t name_length = UnpackBytesBE(2, stream);
@@ -791,10 +852,11 @@ int main(int argc, char const** argv)
             stream += name_length;
 
             field.payload = NBTDataAlloc(field.type, 1);
-            UnpackFieldData(field.type, field.payload, stream);
+            UnpackFieldData(field.type, field.payload,
+                            output_stream.data(), output_stream.size(),
+                            stream);
             current_field = TAG_End;
         }
-        //std::cout << contents << std::endl;
     }
 
     return 0;
