@@ -781,6 +781,115 @@ void UnpackFieldData(NBTTag type, void* data,
     }
 }
 
+void PrintNBTField(NBTField const& field, uint32_t recursion);
+
+void PrintNBTData(NBTTag type, void* data, uint32_t recursion, bool print_indent)
+{
+    std::string indent((size_t)recursion, '\t');
+    if (print_indent)
+        std::cout << indent;
+
+    switch (type)
+    {
+    case NBTTag::TAG_Byte:
+        std::cout << " (byte): " << (int32_t)*(int8_t*)data;
+        break;
+
+    case NBTTag::TAG_Short:
+        std::cout << " (short): " << *(int16_t*)data;
+        break;
+
+    case NBTTag::TAG_Int:
+        std::cout << " (int): " << *(int32_t*)data;
+        break;
+
+    case NBTTag::TAG_Long:
+        std::cout << " (long): " << *(int64_t*)data;
+        break;
+
+    case NBTTag::TAG_Float:
+        std::cout << " (float): " << *(float*)data;
+        break;
+
+    case NBTTag::TAG_Double:
+        std::cout << " (double): " << *(double*)data;
+        break;
+
+    case NBTTag::TAG_Byte_Array:
+    {
+        std::cout << " (byte array): [";
+        NBTByteArray const& byte_array = *(NBTByteArray*)data;
+        for (auto element : byte_array)
+            std::cout << (int32_t)element << ", ";
+        std::cout << "]";
+    } break;
+
+    case NBTTag::TAG_String:
+        std::cout << " (string): " << *(NBTString*)data;
+        break;
+
+    case NBTTag::TAG_List:
+    {
+        std::cout << " (list): [" << std::endl;
+        NBTList const& list = *(NBTList*)data;
+
+        uint8_t* list_data = (uint8_t*)list.data;
+        uint32_t element_size = NBTTypeSize(list.type);
+        for (uint32_t index = 0; index < list.size; ++index)
+        {
+            PrintNBTData(list.type,
+                         list_data + element_size*index,
+                         recursion+1, true);
+            std::cout << std::endl;
+        }
+
+        std::cout << indent << "]";
+    } break;
+
+    case NBTTag::TAG_Compound:
+    {
+        std::cout << " (compound): {" << std::endl;
+        NBTCompound const& compound = *(NBTCompound*)data;
+
+        for (NBTField const& field : compound)
+            PrintNBTField(field, recursion+1);
+
+        std::cout << indent << "}";
+    } break;
+
+    case NBTTag::TAG_Int_Array:
+    {
+        std::cout << " (int array): [";
+        NBTIntArray const& int_array = *(NBTIntArray*)data;
+        for (auto element : int_array)
+            std::cout << element << ", ";
+        std::cout << "]";
+    } break;
+
+    case NBTTag::TAG_Long_Array:
+    {
+        std::cout << " (long array): [";
+        NBTLongArray const& long_array = *(NBTLongArray*)data;
+        for (auto element : long_array)
+            std::cout << element << ", ";
+        std::cout << "]";
+    } break;
+
+    default: break;
+    }
+}
+
+void PrintNBTField(NBTField const& field, uint32_t recursion)
+{
+    std::string indent((size_t)recursion, '\t');
+    std::cout << indent << field.name;
+
+    PrintNBTData(field.type, field.payload, recursion, false);
+
+    //if (field.type != NBTTag::TAG_Compound)
+    std::cout << std::endl;
+}
+
 int main(int argc, char const** argv)
 {
 #if 0
@@ -857,6 +966,10 @@ int main(int argc, char const** argv)
                             stream);
             current_field = TAG_End;
         }
+
+        std::cout << std::dec;
+        for (NBTField const& field : field_list)
+            PrintNBTField(field, 0);
     }
 
     return 0;
