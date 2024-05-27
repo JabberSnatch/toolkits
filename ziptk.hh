@@ -259,6 +259,7 @@ std::vector<uint8_t> Inflate(std::uint8_t const* stream)
     std::vector<uint8_t> output_stream = {};
     std::uint8_t const* base = stream;
 
+#if 0
     GZipHeader header = {};
     header.magic = (uint16_t)UnpackBytes(2, stream);
     header.compression = (uint8_t)UnpackBytes(1, stream);
@@ -266,6 +267,7 @@ std::vector<uint8_t> Inflate(std::uint8_t const* stream)
     header.timestamp = UnpackBytes(4, stream);
     header.compression_flags = (uint8_t)UnpackBytes(1, stream);
     header.os_id = (uint8_t)UnpackBytes(1, stream);
+#endif
 
     std::uint32_t offset = 0;
 
