@@ -436,9 +436,15 @@ std::vector<uint8_t> Inflate(std::uint8_t const* stream)
                         }
 
                         uint32_t begin = output_stream.size()-distance;
-                        for (uint32_t byte_index = 0; byte_index < length; ++byte_index)
-                            output_stream.push_back(
-                                output_stream[begin+byte_index]);
+                        std::size_t old_size = output_stream.size();
+                        output_stream.resize(output_stream.size() + length);
+                        if ((begin+length) < old_size)
+                            std::memcpy(&output_stream[old_size], &output_stream[begin], length);
+                        else
+                            for (uint32_t byte_index = 0; byte_index < length; ++byte_index)
+                                output_stream[old_size+byte_index] =
+                                    output_stream[begin+byte_index];
+
                     }
                 }
             }
