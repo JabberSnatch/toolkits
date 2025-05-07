@@ -75,6 +75,39 @@ struct BlockVector
         , block_size{ _block_size }
     {}
 
+    BlockVector(BlockVector const& o)
+        : object_size{ o.object_size }
+        , block_size{ o.block_size }
+        , blocks{}
+    {
+        blocks.reserve(o.blocks.size());
+        for (std::unique_ptr<uint8_t[]> const& block : o.blocks)
+        {
+            blocks.emplace_back(new uint8_t[object_size * block_size]);
+            uint8_t* dst = blocks.back().get();
+            uint8_t const* src = block.get();
+            std::copy(src, src+object_size*block_size, dst);
+        }
+    }
+
+    BlockVector const& operator=(BlockVector const& o)
+    {
+        object_size = o.object_size;
+        block_size = o.block_size;
+
+        blocks.clear();
+        blocks.reserve(o.blocks.size());
+        for (std::unique_ptr<uint8_t[]> const& block : o.blocks)
+        {
+            blocks.emplace_back(new uint8_t[object_size * block_size]);
+            uint8_t* dst = blocks.back().get();
+            uint8_t const* src = block.get();
+            std::copy(src, src+object_size*block_size, dst);
+        }
+
+        return *this;
+    }
+
     void Expand(uint64_t object_count) {
         if (object_count <= Capacity())
             return;
