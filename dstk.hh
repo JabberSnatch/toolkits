@@ -75,6 +75,7 @@ struct BlockVector
         , block_size{ _block_size }
     {}
 
+#if 0
     BlockVector(BlockVector const& o)
         : object_size{ o.object_size }
         , block_size{ o.block_size }
@@ -107,6 +108,7 @@ struct BlockVector
 
         return *this;
     }
+#endif
 
     void Expand(uint64_t object_count) {
         if (object_count <= Capacity())
