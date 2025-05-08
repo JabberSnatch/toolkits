@@ -114,6 +114,11 @@ Region<DataType>::Region(numtk::vec3u _size, DataType const& _default_value)
     if (1u << (VoxelMask::kLogSize * log_size) < max_size)
         ++log_size;
     level_count = std::max(log_size, 1u);
+
+    root = node_pool[node_pool.Reserve()];
+    root->parent = nullptr;
+    root->location = numtk::vec3u{ 0, 0, 0 };
+    root->depth = level_count - 1;
 }
 
 template <typename DataType>
@@ -193,14 +198,6 @@ void Region<DataType>::Set(numtk::vec3u const& point, bool v)
         || point.z >= size.z)
         return;
 
-    if (!root)
-    {
-        root = node_pool[node_pool.Reserve()];
-        root->parent = nullptr;
-        root->location = numtk::vec3u{ 0, 0, 0 };
-        root->depth = level_count - 1;
-    }
-
     Node* current_node = root;
     while (current_node)
     {
@@ -234,14 +231,6 @@ void Region<DataType>::Set(numtk::vec3u const& point, DataType const& value)
         || point.z >= size.z)
         return;
 
-    if (!root)
-    {
-        root = node_pool[node_pool.Reserve()];
-        root->parent = nullptr;
-        root->location = numtk::vec3u{ 0, 0, 0 };
-        root->depth = level_count - 1;
-    }
-
     Node* current_node = root;
     while (current_node)
     {
@@ -273,14 +262,6 @@ void Region<DataType>::Set(numtk::vec3u const& begin, numtk::vec3u const& end, D
         || begin.y >= size.y
         || begin.z >= size.z)
         return;
-
-    if (!root)
-    {
-        root = node_pool[node_pool.Reserve()];
-        root->parent = nullptr;
-        root->location = numtk::vec3u{ 0, 0, 0 };
-        root->depth = level_count - 1;
-    }
 
     std::vector<Node*> node_queue{ root };
     while (!node_queue.empty())
@@ -331,14 +312,6 @@ void Region<DataType>::Set(numtk::vec3u const& begin, voxtk::Region<DataType> co
         || begin.y >= size.y
         || begin.z >= size.z)
         return;
-
-    if (!root)
-    {
-        root = node_pool[node_pool.Reserve()];
-        root->parent = nullptr;
-        root->location = numtk::vec3u{ 0, 0, 0 };
-        root->depth = level_count - 1;
-    }
 }
 
 template <typename DataType>
