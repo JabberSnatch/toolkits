@@ -129,6 +129,20 @@ struct BlockVector
         return (void*)(blocks[block_index].get() + object_index * object_size);
     }
 
+    uint64_t Find(void const* mem) const {
+        auto block_it = std::find_if(
+            blocks.begin(), blocks.end(),
+            [this, mem](auto const& block){
+                std::ptrdiff_t offset = (uint8_t const*)mem - block.get();
+                return offset >= 0 && offset < (std::ptrdiff_t)(object_size * block_size);
+            });
+
+        if (block_it == blocks.end())
+            return ~0ull;
+
+        return (uint64_t)((uint8_t const*)mem - block_it->get());
+    }
+
     uint64_t Capacity() const { return block_size * blocks.size(); }
 
     uint64_t object_size; // bytes
@@ -140,6 +154,7 @@ template <typename T>
 struct ObjectPool
 {
     using Handle = uint64_t;
+    static constexpr Handle kNullHandle = Handle(0);
 
     void Expand(uint64_t required_size)
     {
@@ -147,19 +162,24 @@ struct ObjectPool
     }
 
     Handle Reserve() {
-        Handle handle = free_list.Reserve();
+        uint64_t index = free_list.Reserve();
         items.Expand(free_list.RequiredSize());
-        new (items[handle]) T{};
-        return handle;
+        new (items[index]) T{};
+        return index+1;
     }
 
     T* operator[](Handle handle) const {
-        return (T*)items[handle];
+        return (T*)items[handle-1];
     }
 
     void Release(Handle handle) {
         ((T*)items[handle])->~T();
-        free_list.Release(handle);
+        free_list.Release(handle-1);
+    }
+
+    Handle Find(T const* item) const {
+        uint64_t index = items.Find(item);
+        return index + 1;
     }
 
     BlockVector items{ sizeof(T), 256ull };
