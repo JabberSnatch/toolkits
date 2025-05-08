@@ -46,6 +46,8 @@ template <typename DataType>
 struct Region
 {
     struct Node;
+    using NodeHandle = dstk::ObjectPool<Node>::Handle;
+    static constexpr NodeHandle kNullNode = dstk::ObjectPool<Node>::kNullHandle;
 
     Region(numtk::vec3u _size, DataType const& _default_value);
 
@@ -61,11 +63,13 @@ struct Region
 
     void Clear(numtk::vec3u const& begin, numtk::vec3u const& end);
 
+    Region<DataType> BitwiseAnd(Region<DataType> const& other, numtk::vec3u const& base);
+
     Node* FindLeaf(numtk::vec3u const& point) const;
     uint64_t ExtractKernel(numtk::vec3u const& base) const;
 
     struct Node {
-        Node* parent;
+        NodeHandle parent;
         numtk::vec3u location;
         uint32_t depth;
 
@@ -83,15 +87,15 @@ struct Region
         VoxelMask data_mask{};
         std::vector<DataType> data{};
 #ifndef DENSE_CHILDREN_ARRAY
-        dstk::OrderedVector<uint16_t, Node*> children{};
+        dstk::OrderedVector<uint16_t, NodeHandle> children{};
 #else
-        std::vector<Node*> children = std::vector<Node*>(VoxelMask::kVolume);
+        std::vector<NodeHandle> children = std::vector<NodeHandle>(VoxelMask::kVolume);
 #endif
     };
 
     Node* InsertChild(Node* parent, numtk::vec3u local_point);
 
-    Node* root = nullptr;
+    NodeHandle root = kNullNode;
     dstk::ObjectPool<Node> node_pool{};
     uint32_t level_count;
     numtk::vec3u size;
@@ -114,6 +118,12 @@ Region<DataType>::Region(numtk::vec3u _size, DataType const& _default_value)
     if (1u << (VoxelMask::kLogSize * log_size) < max_size)
         ++log_size;
     level_count = std::max(log_size, 1u);
+
+    root = node_pool.Reserve();
+    Node* root_node = node_pool[root];
+    root_node->parent = kNullNode;
+    root_node->location = numtk::vec3u{ 0, 0, 0 };
+    root_node->depth = level_count - 1;
 }
 
 template <typename DataType>
@@ -134,14 +144,14 @@ DataType const& Region<DataType>::operator[](numtk::vec3u const& point) const
         || point.z >= size.z)
         return default_value;
 
-    Node* current_node = root;
+    Node* current_node = node_pool[root];
     while (current_node)
     {
         numtk::vec3u local_point = current_node->LocalPoint(point);
         if (current_node->child_mask.Test(local_point))
         {
             uint16_t point_index = current_node->ChildIndex(local_point);
-            current_node = current_node->children[point_index];
+            current_node = node_pool[current_node->children[point_index]];
         }
         else if (current_node->data_mask.Test(local_point))
         {
@@ -169,14 +179,14 @@ bool Region<DataType>::Test(numtk::vec3u const& point) const
         || point.z >= size.z)
         return false;
 
-    Node* current_node = root;
+    Node* current_node = node_pool[root];
     while (current_node)
     {
         numtk::vec3u local_point = current_node->LocalPoint(point);
         if (current_node->child_mask.Test(local_point))
         {
             uint16_t point_index = current_node->ChildIndex(local_point);
-            current_node = current_node->children[point_index];
+            current_node = node_pool[current_node->children[point_index]];
         }
         else
             return current_node->data_mask.Test(local_point);
@@ -193,15 +203,7 @@ void Region<DataType>::Set(numtk::vec3u const& point, bool v)
         || point.z >= size.z)
         return;
 
-    if (!root)
-    {
-        root = node_pool[node_pool.Reserve()];
-        root->parent = nullptr;
-        root->location = numtk::vec3u{ 0, 0, 0 };
-        root->depth = level_count - 1;
-    }
-
-    Node* current_node = root;
+    Node* current_node = node_pool[root];
     while (current_node)
     {
         numtk::vec3u local_point = current_node->LocalPoint(point);
@@ -215,7 +217,7 @@ void Region<DataType>::Set(numtk::vec3u const& point, bool v)
         else if (current_node->child_mask.Test(local_point))
         {
             uint16_t point_index = current_node->ChildIndex(local_point);
-            current_node = current_node->children[point_index];
+            current_node = node_pool[current_node->children[point_index]];
         }
 
         else if (current_node->data_mask.Test(local_point) != v)
@@ -234,15 +236,7 @@ void Region<DataType>::Set(numtk::vec3u const& point, DataType const& value)
         || point.z >= size.z)
         return;
 
-    if (!root)
-    {
-        root = node_pool[node_pool.Reserve()];
-        root->parent = nullptr;
-        root->location = numtk::vec3u{ 0, 0, 0 };
-        root->depth = level_count - 1;
-    }
-
-    Node* current_node = root;
+    Node* current_node = node_pool[root];
     while (current_node)
     {
         numtk::vec3u local_point = current_node->LocalPoint(point);
@@ -257,7 +251,7 @@ void Region<DataType>::Set(numtk::vec3u const& point, DataType const& value)
         else if (current_node->child_mask.Test(local_point))
         {
             uint16_t point_index = current_node->ChildIndex(local_point);
-            current_node = current_node->children[point_index];
+            current_node = node_pool[current_node->children[point_index]];
         }
 
         else
@@ -274,15 +268,7 @@ void Region<DataType>::Set(numtk::vec3u const& begin, numtk::vec3u const& end, D
         || begin.z >= size.z)
         return;
 
-    if (!root)
-    {
-        root = node_pool[node_pool.Reserve()];
-        root->parent = nullptr;
-        root->location = numtk::vec3u{ 0, 0, 0 };
-        root->depth = level_count - 1;
-    }
-
-    std::vector<Node*> node_queue{ root };
+    std::vector<Node*> node_queue{ node_pool[root] };
     while (!node_queue.empty())
     {
         Node* current_node = node_queue.back();
@@ -318,7 +304,7 @@ void Region<DataType>::Set(numtk::vec3u const& begin, numtk::vec3u const& end, D
                         if (!current_node->child_mask.Test(child_location))
                             InsertChild(current_node, child_location);
 
-                        node_queue.push_back(current_node->children[child_index]);
+                        node_queue.push_back(node_pool[current_node->children[child_index]]);
                     }
         }
     }
@@ -335,7 +321,7 @@ void Region<DataType>::Set(numtk::vec3u const& begin, voxtk::Region<DataType> co
     if (!root)
     {
         root = node_pool[node_pool.Reserve()];
-        root->parent = nullptr;
+        root->parent = kNullNode;//nullptr;
         root->location = numtk::vec3u{ 0, 0, 0 };
         root->depth = level_count - 1;
     }
@@ -384,7 +370,7 @@ void Region<DataType>::Clear(numtk::vec3u const& begin, numtk::vec3u const& end)
                         numtk::vec3u const child{ x, y, z };
                         uint16_t child_index = current_node->ChildIndex(child);
                         if (current_node->child_mask.Test(child))
-                            node_queue.push_back(current_node->children[child_index]);
+                            node_queue.push_back(node_pool[current_node->children[child_index]]);
                     }
         }
     }
@@ -401,7 +387,7 @@ typename Region<DataType>::Node* Region<DataType>::FindLeaf(numtk::vec3u const& 
     if (!root)
         return nullptr;
 
-    Node* current_node = root;
+    Node* current_node = node_pool[root];
     while (current_node)
     {
         numtk::vec3u local_point = current_node->LocalPoint(point);
@@ -410,7 +396,7 @@ typename Region<DataType>::Node* Region<DataType>::FindLeaf(numtk::vec3u const& 
         else
         {
             uint16_t point_index = current_node->ChildIndex(local_point);
-            current_node = current_node->children[point_index];
+            current_node = node_pool[current_node->children[point_index]];
         }
     }
 
@@ -436,26 +422,24 @@ typename Region<DataType>::Node* Region<DataType>::InsertChild(Region<DataType>:
     uint16_t point_index = parent->ChildIndex(local_point);
 
 #ifndef DENSE_CHILDREN_ARRAY
-    auto child_node =
-        parent->children.insert(point_index, node_pool[node_pool.Reserve()]);
 
-    (*child_node)->parent = parent;
-    (*child_node)->location = local_point;
-    (*child_node)->depth = parent->depth - 1;
-    parent->child_mask.Set(local_point, true);
+    NodeHandle child =
+        *parent->children.insert(point_index, node_pool.Reserve());
 
-    return *child_node;
 #else
-    Node* child_node = node_pool[node_pool.Reserve()];
-    parent->children[point_index] = child_node;
 
-    child_node->parent = parent;
+    NodeHandle child = node_pool.Reserve();
+    parent->children[point_index] = child;
+
+#endif
+
+    Node* child_node = node_pool[child];
+    child_node->parent = node_pool.Find(parent);
     child_node->location = local_point;
     child_node->depth = parent->depth - 1;
     parent->child_mask.Set(local_point, true);
 
     return child_node;
-#endif
 }
 
 template <typename DataType>
