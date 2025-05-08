@@ -8,11 +8,13 @@
 namespace ziptk
 {
 
-std::vector<uint8_t> Inflate(std::uint8_t const* stream);
+std::vector<uint8_t> Inflate(uint8_t const* stream);
 
 } // namespace ziptk
 
 #ifdef ZIPTK_IMPLEMENTATION
+
+#include <cstring>
 
 namespace ziptk
 {
