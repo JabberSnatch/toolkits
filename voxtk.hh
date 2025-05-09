@@ -19,6 +19,8 @@ struct VoxelMask
     static VoxelMask FillBelow(numtk::vec3u const& end);
     static VoxelMask FillArea(numtk::vec3u const& begin, numtk::vec3u const& end);
 
+    static uint16_t BitIndex(numtk::vec3u const& point);
+
     VoxelMask& Clear();
     VoxelMask& BitReverse();
 
@@ -153,10 +155,7 @@ DataType const& Region<DataType>::operator[](numtk::vec3u const& point) const
             if (current_node->data.empty())
                 return default_value;
 
-            uint32_t const data_index =
-                local_point.x
-                + local_point.y*VoxelMask::kSize
-                + local_point.z*VoxelMask::kSize*VoxelMask::kSize;
+            uint16_t const data_index = VoxelMask::BitIndex(local_point);
             return current_node->data[data_index];
         }
         else
@@ -449,10 +448,7 @@ template <typename DataType>
 void Region<DataType>::Node::SetData(numtk::vec3u const& point, DataType const& value)
 {
     if (data.empty()) data.resize(VoxelMask::kVolume);
-    uint32_t const index =
-        point.x
-        + point.y*VoxelMask::kSize
-        + point.z*VoxelMask::kSize*VoxelMask::kSize;
+    uint16_t const index = VoxelMask::BitIndex(point);
     data[index] = value;
 }
 
@@ -464,8 +460,7 @@ void Region<DataType>::Node::SetData(numtk::vec3u const& begin, numtk::vec3u con
         for (uint32_t y = begin.y; y < end.y; ++y)
             for (uint32_t x = begin.x; x < end.x; ++x)
             {
-                uint32_t const index =
-                    x + y*VoxelMask::kSize + z*VoxelMask::kSize*VoxelMask::kSize;
+                uint16_t const index = VoxelMask::BitIndex(numtk::vec3u{ x, y, z });
                 data[index] = value;
             }
 }
@@ -477,9 +472,7 @@ numtk::vec3u Region<DataType>::Node::LocalPoint(numtk::vec3u const& point) const
 
 template <typename DataType>
 uint16_t Region<DataType>::Node::ChildIndex(numtk::vec3u const& child) {
-    return (uint16_t)(child.x
-                      + child.y*VoxelMask::kSize
-                      + child.z*VoxelMask::kSize*VoxelMask::kSize);
+    return VoxelMask::BitIndex(child);
 }
 
 
@@ -587,6 +580,15 @@ VoxelMask VoxelMask::FillBelow(numtk::vec3u const& end)
 VoxelMask VoxelMask::FillArea(numtk::vec3u const& begin, numtk::vec3u const& end)
 {
     return FillBelow(end).BitwiseAnd(FillAbove(begin));
+}
+
+uint16_t VoxelMask::BitIndex(numtk::vec3u const& point)
+{
+    // 2 wide blocks of 4 wide blocks
+    // 1 bit for the toplevel, 2 bits for the bottomlevel
+    return
+        ((point.x & 0x3u) | ((point.y & 0x3u) << 2) | ((point.z & 0x3u) << 4))
+        | (((point.x >> 2) | ((point.y >> 2) << 1) | ((point.z >> 2) << 2)) << 6);
 }
 
 VoxelMask& VoxelMask::Clear()
@@ -709,25 +711,24 @@ VoxelMask& VoxelMask::Shift(numtk::vec3i const& shift)
 
 bool VoxelMask::Test(numtk::vec3u const& point) const
 {
-    //numtk::vec3u const pack_point = point >> 2u;
-    //numtk::vec3u const bit_point = point & 0x3u;
-    uint32_t const pack_index = (point.x >> 2u) + ((point.y >> 1u) & ~0x1u) + (point.z & ~0x3u);
-    uint32_t const bit_index = (point.x & 0x3u) + ((point.y & 0x3u) << 2u) + ((point.z & 0x3u) << 4u);
+    uint16_t bit_index = BitIndex(point);
+    uint16_t pack_index = bit_index / 64;
+    bit_index = bit_index & 63;
     return !!((bits[pack_index] >> bit_index) & 1);
 }
 
 uint64_t VoxelMask::ExtractKernel(numtk::vec3u const& base) const
 {
-    uint32_t const pack_index = (base.x >> 2u) + ((base.y >> 1u) & ~0x1u) + (base.z & ~0x3u);
+    uint16_t pack_index = BitIndex(base) / 64;
     return bits[pack_index];
 }
 
 VoxelMask& VoxelMask::Set(numtk::vec3u const& point, bool v)
 {
-    //numtk::vec3u const pack_point = point >> 2u;/// 4u;
-    //numtk::vec3u const bit_point = point & 0x3u;//% 4u;
-    uint32_t const pack_index = (point.x >> 2u) + ((point.y >> 1u) & ~0x1u) + (point.z & ~0x3u);
-    uint32_t const bit_index = (point.x & 0x3u) + ((point.y & 0x3u) << 2u) + ((point.z & 0x3u) << 4u);
+    uint16_t bit_index = BitIndex(point);
+    uint16_t pack_index = bit_index / 64;
+    bit_index = bit_index & 63;
+
     if (v)
         bits[pack_index] |= (1ull << bit_index);
     else
