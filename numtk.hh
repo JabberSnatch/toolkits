@@ -57,23 +57,6 @@ template <typename scalar>
 struct vec3
 {
     scalar x, y, z;
-#if 0
-    union {
-        struct {
-            scalar x;
-            scalar y;
-            scalar z;
-        } comp;
-
-        std::array<scalar, 3> a;
-    } data;
-#endif
-
-#if 0
-    scalar& x() { return data.comp.x; }
-    scalar& y() { return data.comp.y; }
-    scalar& z() { return data.comp.z; }
-#endif
 
     scalar& operator[](std::size_t index) { return ((scalar*)&x)[index]; }
     scalar const& operator[](std::size_t index) const {
@@ -81,12 +64,6 @@ struct vec3
     }
 
     static vec3<scalar> Constant(scalar v) { return vec3<scalar>{ v, v, v }; }
-
-#if 0
-    scalar const& x() const { return static_cast<scalar const&>(const_cast<vec3*>(this)->x()); }
-    scalar const& y() const { return static_cast<scalar const&>(const_cast<vec3*>(this)->y()); }
-    scalar const& z() const { return static_cast<scalar const&>(const_cast<vec3*>(this)->z()); }
-#endif
 
     vec3 operator+(vec3 const& o) const { return { x+o.x, y+o.y, z+o.z }; }
     vec3& operator+=(vec3 const& o) { x+=o.x; y+=o.y; z+=o.z; return *this; }
@@ -382,6 +359,14 @@ struct bounds3
             && point.y >= min.y && point.y < max.y
             && point.z >= min.z && point.z < max.z;
     }
+
+    bounds3 Intersection(bounds3 const& other) const {
+        bounds3 output = {};
+        output.min = numtk::max(min, other.min);
+        PointType max = numtk::min((min+extent), (other.min+other.extent));
+        output.extent = max - output.min;
+        return output;
+    }
 };
 
 using vec2f = vec2<float>;
@@ -397,6 +382,7 @@ using quatf = quat<float>;
 using bounds2f = bounds2<float>;
 using bounds2u = bounds2<uint32_t>;
 using bounds2i = bounds2<int32_t>;
+using bounds3u = bounds3<uint32_t>;
 using bounds3i = bounds3<int32_t>;
 
 template <uint32_t B>
