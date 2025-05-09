@@ -426,6 +426,12 @@ BitExtract(uint32_t _v, uint32_t _m)
     return (uint32_t)_pext_u32(_v, _m);
 }
 
+inline uint32_t
+BitDeposit(uint32_t _v, uint32_t _m)
+{
+    return (uint32_t)_pdep_u32(_v, _m);
+}
+
 inline uint64_t
 BitExtract(uint64_t _v, uint64_t _m)
 {
@@ -436,6 +442,12 @@ inline uint64_t
 BitDeposit(uint64_t _v, uint64_t _m)
 {
     return (uint64_t)_pdep_u64(_v, _m);
+}
+
+inline uint64_t
+BitTrailingZeroCount(uint64_t _v)
+{
+    return (uint64_t)_tzcnt_u64(_v);
 }
 
 } // namespace numtk
