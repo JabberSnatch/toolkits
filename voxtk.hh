@@ -20,6 +20,7 @@ struct VoxelMask
     static VoxelMask FillArea(numtk::vec3u const& begin, numtk::vec3u const& end);
 
     static uint16_t BitIndex(numtk::vec3u const& point);
+    static numtk::vec3u PointLocation(uint16_t index);
 
     VoxelMask& Clear();
     VoxelMask& BitReverse();
@@ -36,6 +37,8 @@ struct VoxelMask
     VoxelMask& Set(numtk::vec3u const& point, bool v);
     VoxelMask& Set(numtk::vec3u const& begin, numtk::vec3u const& end, bool v);
 
+    uint16_t NextIndex(uint16_t index = ~(uint16_t)0) const;
+
     bool Full() const;
     bool Empty() const;
 
@@ -50,6 +53,9 @@ struct Region
     struct Node;
 
     Region(numtk::vec3u _size, DataType const& _default_value);
+    Region(Region&&) = default;
+    Region& operator=(Region&&) = default;
+    Region(Region const& _other);
 
     DataType const& operator[](uint32_t const& index) const;
     DataType const& operator[](numtk::vec3u const& point) const;
@@ -121,6 +127,30 @@ Region<DataType>::Region(numtk::vec3u _size, DataType const& _default_value)
     root->parent = nullptr;
     root->location = numtk::vec3u{ 0, 0, 0 };
     root->depth = level_count - 1;
+}
+
+template <typename DataType>
+Region<DataType>::Region(Region const& _other)
+    : Region<DataType>{ _other.size, _other.default_value }
+{
+    *root = *_other.root;
+    std::vector<Node*> node_queue = { root };
+
+    while (!node_queue.empty())
+    {
+        Node* current_node = node_queue.back();
+        node_queue.pop_back();
+
+        uint16_t child_index = current_node->child_mask.NextIndex();
+        while (child_index < 512)
+        {
+            Node* new_node = node_pool[node_pool.Reserve()];
+            *new_node = *(current_node->children[child_index]);
+            current_node->children[child_index] = new_node;
+            node_queue.push_back(new_node);
+            child_index = current_node->child_mask.NextIndex(child_index);
+        }
+    }
 }
 
 template <typename DataType>
@@ -586,9 +616,19 @@ uint16_t VoxelMask::BitIndex(numtk::vec3u const& point)
 {
     // 2 wide blocks of 4 wide blocks
     // 1 bit for the toplevel, 2 bits for the bottomlevel
-    return
-        ((point.x & 0x3u) | ((point.y & 0x3u) << 2) | ((point.z & 0x3u) << 4))
-        | (((point.x >> 2) | ((point.y >> 2) << 1) | ((point.z >> 2) << 2)) << 6);
+    return (uint16_t)(
+        numtk::BitDeposit(point.x, 0b1000011) |
+        numtk::BitDeposit(point.y, 0b10001100) |
+        numtk::BitDeposit(point.z, 0b100110000));
+}
+
+numtk::vec3u VoxelMask::PointLocation(uint16_t index)
+{
+    return numtk::vec3u{
+        numtk::BitExtract((uint32_t)index, 0b1000011),
+        numtk::BitExtract((uint32_t)index, 0b100011000),
+        numtk::BitExtract((uint32_t)index, 0b100110000)
+    };
 }
 
 VoxelMask& VoxelMask::Clear()
@@ -750,6 +790,22 @@ VoxelMask& VoxelMask::Set(numtk::vec3u const& begin, numtk::vec3u const& end, bo
     }
 
     return *this;
+}
+
+uint16_t VoxelMask::NextIndex(uint16_t index) const
+{
+    ++index;
+    uint16_t first_pack = index / 64;
+
+    while (first_pack < 8 && !(bits[first_pack] >> (index % 64))){
+        ++first_pack;
+        index = first_pack * 64;
+    }
+    if (first_pack >= 8)
+        return 512;
+
+    uint16_t tzc = numtk::BitTrailingZeroCount(bits[first_pack] >> (index % 64));
+    return index + tzc;
 }
 
 bool VoxelMask::Full() const
