@@ -732,89 +732,71 @@ VoxelMask VoxelMask::Shift(numtk::vec3i const& shift)
        x  x  x  x
      */
 
+    VoxelMask output = {};
+
     static constexpr uint64_t kBroadcastU4 = 0x1111'1111'1111'1111ull;
     static constexpr uint64_t kBroadcastU16 = 0x0001'0001'0001'0001ull;
 
     if (shift.x > 0)
     {
-        uint64_t const xdstmask = ((0xfull << shift.x) & 0xfull) * kBroadcastU4;
-        uint64_t const xsrcmask = (0xfull >> shift.x) * kBroadcastU4;
-        uint64_t const xdstcarry = ((0xfull >> (4-shift.x)) & 0xfull) * kBroadcastU4;
-        uint64_t const xsrccarry = (0xfull << (4-shift.x)) * kBroadcastU4;
+        uint32_t const bitshift = shift.x % 4;
+        uint32_t const blockshift = (shift.x / 4) % 2;
 
-        if (shift.x < 4)
-        {
-            bits[7] = numtk::BitDeposit(numtk::BitExtract(bits[7], xsrcmask), xdstmask)
-                | numtk::BitDeposit(numtk::BitExtract(bits[6], xsrccarry), xdstcarry);
-            bits[6] = numtk::BitDeposit(numtk::BitExtract(bits[6], xsrcmask), xdstmask);
+        uint64_t const xdstmask = ((0xfull << bitshift) & 0xfull) * kBroadcastU4;
+        uint64_t const xsrcmask = (0xfull >> bitshift) * kBroadcastU4;
+        uint64_t const xdstcarry = (0xfull >> (4-bitshift)) * kBroadcastU4;
+        uint64_t const xsrccarry = ((0xfull << (4-bitshift)) & 0xfull) * kBroadcastU4;
 
-            bits[5] = numtk::BitDeposit(numtk::BitExtract(bits[5], xsrcmask), xdstmask)
-                | numtk::BitDeposit(numtk::BitExtract(bits[4], xsrccarry), xdstcarry);
-            bits[4] = numtk::BitDeposit(numtk::BitExtract(bits[4], xsrcmask), xdstmask);
+        output.bits[7] = numtk::BitDeposit(numtk::BitExtract(bits[7 - blockshift], xsrcmask), xdstmask)
+            | numtk::BitDeposit(numtk::BitExtract(bits[6 + blockshift], xsrccarry), xdstcarry);
+        output.bits[6] = numtk::BitDeposit(numtk::BitExtract(bits[6 + blockshift], xsrcmask), xdstmask)
+            | numtk::BitDeposit(numtk::BitExtract(bits[7 - blockshift], xsrccarry), xdstcarry);
 
-            bits[3] = numtk::BitDeposit(numtk::BitExtract(bits[3], xsrcmask), xdstmask)
-                | numtk::BitDeposit(numtk::BitExtract(bits[2], xsrccarry), xdstcarry);
-            bits[2] = numtk::BitDeposit(numtk::BitExtract(bits[2], xsrcmask), xdstmask);
+        output.bits[5] = numtk::BitDeposit(numtk::BitExtract(bits[5 - blockshift], xsrcmask), xdstmask)
+            | numtk::BitDeposit(numtk::BitExtract(bits[4 + blockshift], xsrccarry), xdstcarry);
+        output.bits[4] = numtk::BitDeposit(numtk::BitExtract(bits[4 + blockshift], xsrcmask), xdstmask)
+            | numtk::BitDeposit(numtk::BitExtract(bits[5 - blockshift], xsrccarry), xdstcarry);
 
-            bits[1] = numtk::BitDeposit(numtk::BitExtract(bits[1], xsrcmask), xdstmask)
-                | numtk::BitDeposit(numtk::BitExtract(bits[0], xsrccarry), xdstcarry);
-            bits[0] = numtk::BitDeposit(numtk::BitExtract(bits[0], xsrcmask), xdstmask);
-        }
-        else
-        {
-            bits[7] = numtk::BitDeposit(numtk::BitExtract(bits[6], xsrcmask), xdstmask);
-            bits[6] = 0ull;
+        output.bits[3] = numtk::BitDeposit(numtk::BitExtract(bits[3 - blockshift], xsrcmask), xdstmask)
+            | numtk::BitDeposit(numtk::BitExtract(bits[2 + blockshift], xsrccarry), xdstcarry);
+        output.bits[2] = numtk::BitDeposit(numtk::BitExtract(bits[2 + blockshift], xsrcmask), xdstmask)
+            | numtk::BitDeposit(numtk::BitExtract(bits[3 - blockshift], xsrccarry), xdstcarry);
 
-            bits[5] = numtk::BitDeposit(numtk::BitExtract(bits[4], xsrcmask), xdstmask);
-            bits[4] = 0ull;
-
-            bits[3] = numtk::BitDeposit(numtk::BitExtract(bits[2], xsrcmask), xdstmask);
-            bits[2] = 0ull;
-
-            bits[1] = numtk::BitDeposit(numtk::BitExtract(bits[0], xsrcmask), xdstmask);
-            bits[0] = 0ull;
-        }
+        output.bits[1] = numtk::BitDeposit(numtk::BitExtract(bits[1 - blockshift], xsrcmask), xdstmask)
+            | numtk::BitDeposit(numtk::BitExtract(bits[0 + blockshift], xsrccarry), xdstcarry);
+        output.bits[0] = numtk::BitDeposit(numtk::BitExtract(bits[0 + blockshift], xsrcmask), xdstmask)
+            | numtk::BitDeposit(numtk::BitExtract(bits[1 - blockshift], xsrccarry), xdstcarry);
     }
 
     if (shift.y > 0)
     {
-        uint64_t const ydstmask = ((0xffffull << (shift.y * 4)) & 0xffffull) * kBroadcastU16;
-        uint64_t const ysrcmask = (0xffffull >> (shift.y * 4)) * kBroadcastU16;
-        uint64_t const ydstcarry = ((0xffffull >> ((4-shift.y) * 4)) & 0xffffull) * kBroadcastU16;
-        uint64_t const ysrccarry = (0xffffull << ((4-shift.y) * 4)) * kBroadcastU16;
+        uint32_t const bitshift = (shift.y % 4) * 4;
+        uint32_t const blockshift = ((shift.y / 4) % 2) * 4;
 
-        if (shift.y < 4)
-        {
-            bits[7] = numtk::BitDeposit(numtk::BitExtract(bits[7], ysrcmask), ydstmask)
-                | numtk::BitDeposit(numtk::BitExtract(bits[3], ysrccarry), ydstcarry);
+        uint64_t const ydstmask = ((0xffffull << bitshift) & 0xffffull) * kBroadcastU16;
+        uint64_t const ysrcmask = (0xffffull >> bitshift) * kBroadcastU16;
+        uint64_t const ydstcarry = (0xffffull >> (16 - bitshift)) * kBroadcastU16;
+        uint64_t const ysrccarry = ((0xffffull << (16 - bitshift)) & 0xffffull) * kBroadcastU16;
 
-            bits[6] = numtk::BitDeposit(numtk::BitExtract(bits[6], ysrcmask), ydstmask)
-                | numtk::BitDeposit(numtk::BitExtract(bits[2], ysrccarry), ydstcarry);
+        output.bits[7] = numtk::BitDeposit(numtk::BitExtract(bits[7 - blockshift], ysrcmask), ydstmask)
+            | numtk::BitDeposit(numtk::BitExtract(bits[3 + blockshift], ysrccarry), ydstcarry);
+        output.bits[3] = numtk::BitDeposit(numtk::BitExtract(bits[3 + blockshift], ysrcmask), ydstmask)
+            | numtk::BitDeposit(numtk::BitExtract(bits[7 - blockshift], ysrccarry), ydstcarry);
 
-            bits[5] = numtk::BitDeposit(numtk::BitExtract(bits[5], ysrcmask), ydstmask)
-                | numtk::BitDeposit(numtk::BitExtract(bits[1], ysrccarry), ydstcarry);
+        output.bits[6] = numtk::BitDeposit(numtk::BitExtract(bits[6 - blockshift], ysrcmask), ydstmask)
+            | numtk::BitDeposit(numtk::BitExtract(bits[2 + blockshift], ysrccarry), ydstcarry);
+        output.bits[2] = numtk::BitDeposit(numtk::BitExtract(bits[2 + blockshift], ysrcmask), ydstmask)
+            | numtk::BitDeposit(numtk::BitExtract(bits[6 - blockshift], ysrccarry), ydstcarry);
 
-            bits[4] = numtk::BitDeposit(numtk::BitExtract(bits[4], ysrcmask), ydstmask)
-                | numtk::BitDeposit(numtk::BitExtract(bits[0], ysrccarry), ydstcarry);
+        output.bits[5] = numtk::BitDeposit(numtk::BitExtract(bits[5 - blockshift], ysrcmask), ydstmask)
+            | numtk::BitDeposit(numtk::BitExtract(bits[1 + blockshift], ysrccarry), ydstcarry);
+        output.bits[1] = numtk::BitDeposit(numtk::BitExtract(bits[1 + blockshift], ysrcmask), ydstmask)
+            | numtk::BitDeposit(numtk::BitExtract(bits[5 - blockshift], ysrccarry), ydstcarry);
 
-            bits[3] = numtk::BitDeposit(numtk::BitExtract(bits[3], ysrcmask), ydstmask);
-            bits[2] = numtk::BitDeposit(numtk::BitExtract(bits[2], ysrcmask), ydstmask);
-            bits[1] = numtk::BitDeposit(numtk::BitExtract(bits[1], ysrcmask), ydstmask);
-            bits[0] = numtk::BitDeposit(numtk::BitExtract(bits[0], ysrcmask), ydstmask);
-        }
-        else
-        {
-            bits[7] = numtk::BitDeposit(numtk::BitExtract(bits[3], ysrcmask), ydstmask);
-            bits[6] = numtk::BitDeposit(numtk::BitExtract(bits[2], ysrcmask), ydstmask);
-            bits[5] = numtk::BitDeposit(numtk::BitExtract(bits[1], ysrcmask), ydstmask);
-            bits[4] = numtk::BitDeposit(numtk::BitExtract(bits[0], ysrcmask), ydstmask);
-
-            bits[3] = 0ull;
-            bits[2] = 0ull;
-            bits[1] = 0ull;
-            bits[0] = 0ull;
-        }
-
+        output.bits[4] = numtk::BitDeposit(numtk::BitExtract(bits[4 - blockshift], ysrcmask), ydstmask)
+            | numtk::BitDeposit(numtk::BitExtract(bits[0 + blockshift], ysrccarry), ydstcarry);
+        output.bits[0] = numtk::BitDeposit(numtk::BitExtract(bits[0 + blockshift], ysrcmask), ydstmask)
+            | numtk::BitDeposit(numtk::BitExtract(bits[4 - blockshift], ysrccarry), ydstcarry);
     }
 
     if (shift.z > 0)
@@ -829,7 +811,7 @@ VoxelMask VoxelMask::Shift(numtk::vec3i const& shift)
         bits[7] = (shift.z < 4) ? bits[7] << (shift.z * 16) : 0ull;
     }
 
-    return *this;
+    return output;
 }
 
 bool VoxelMask::Test(numtk::vec3u const& point) const
