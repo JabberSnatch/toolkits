@@ -707,38 +707,15 @@ VoxelMask VoxelMask::BitwiseNot() const
 
 VoxelMask VoxelMask::Shift(numtk::vec3i const& shift)
 {
-    /*
-       0  1  2  3
-       4  5  6  7
-       8  9 10 11
-      12 13 14 15
-
-      // X shift
-       x  0  1  2
-       x  4  5  6
-       x  8  9 10
-       x 12 13 14
-
-      // Y shift
-       x  x  x  x
-       0  1  2  3
-       4  5  6  7
-       8  9 10 11
-
-      // Z shift
-       x  x  x  x
-       x  x  x  x
-       x  x  x  x
-       x  x  x  x
-     */
-
-    VoxelMask output = {};
+    VoxelMask output = *this;
 
     static constexpr uint64_t kBroadcastU4 = 0x1111'1111'1111'1111ull;
     static constexpr uint64_t kBroadcastU16 = 0x0001'0001'0001'0001ull;
 
-    if (shift.x > 0)
+    if (shift.x != 0)
     {
+        VoxelMask copy = output;
+
         uint32_t const bitshift = shift.x % 4;
         uint32_t const blockshift = (shift.x / 4) % 2;
 
@@ -747,68 +724,93 @@ VoxelMask VoxelMask::Shift(numtk::vec3i const& shift)
         uint64_t const xdstcarry = (0xfull >> (4-bitshift)) * kBroadcastU4;
         uint64_t const xsrccarry = ((0xfull << (4-bitshift)) & 0xfull) * kBroadcastU4;
 
-        output.bits[7] = numtk::BitDeposit(numtk::BitExtract(bits[7 - blockshift], xsrcmask), xdstmask)
-            | numtk::BitDeposit(numtk::BitExtract(bits[6 + blockshift], xsrccarry), xdstcarry);
-        output.bits[6] = numtk::BitDeposit(numtk::BitExtract(bits[6 + blockshift], xsrcmask), xdstmask)
-            | numtk::BitDeposit(numtk::BitExtract(bits[7 - blockshift], xsrccarry), xdstcarry);
+        output.bits[7] = numtk::BitDeposit(numtk::BitExtract(copy.bits[7 - blockshift], xsrcmask), xdstmask)
+            | numtk::BitDeposit(numtk::BitExtract(copy.bits[6 + blockshift], xsrccarry), xdstcarry);
+        output.bits[6] = numtk::BitDeposit(numtk::BitExtract(copy.bits[6 + blockshift], xsrcmask), xdstmask)
+            | numtk::BitDeposit(numtk::BitExtract(copy.bits[7 - blockshift], xsrccarry), xdstcarry);
 
-        output.bits[5] = numtk::BitDeposit(numtk::BitExtract(bits[5 - blockshift], xsrcmask), xdstmask)
-            | numtk::BitDeposit(numtk::BitExtract(bits[4 + blockshift], xsrccarry), xdstcarry);
-        output.bits[4] = numtk::BitDeposit(numtk::BitExtract(bits[4 + blockshift], xsrcmask), xdstmask)
-            | numtk::BitDeposit(numtk::BitExtract(bits[5 - blockshift], xsrccarry), xdstcarry);
+        output.bits[5] = numtk::BitDeposit(numtk::BitExtract(copy.bits[5 - blockshift], xsrcmask), xdstmask)
+            | numtk::BitDeposit(numtk::BitExtract(copy.bits[4 + blockshift], xsrccarry), xdstcarry);
+        output.bits[4] = numtk::BitDeposit(numtk::BitExtract(copy.bits[4 + blockshift], xsrcmask), xdstmask)
+            | numtk::BitDeposit(numtk::BitExtract(copy.bits[5 - blockshift], xsrccarry), xdstcarry);
 
-        output.bits[3] = numtk::BitDeposit(numtk::BitExtract(bits[3 - blockshift], xsrcmask), xdstmask)
-            | numtk::BitDeposit(numtk::BitExtract(bits[2 + blockshift], xsrccarry), xdstcarry);
-        output.bits[2] = numtk::BitDeposit(numtk::BitExtract(bits[2 + blockshift], xsrcmask), xdstmask)
-            | numtk::BitDeposit(numtk::BitExtract(bits[3 - blockshift], xsrccarry), xdstcarry);
+        output.bits[3] = numtk::BitDeposit(numtk::BitExtract(copy.bits[3 - blockshift], xsrcmask), xdstmask)
+            | numtk::BitDeposit(numtk::BitExtract(copy.bits[2 + blockshift], xsrccarry), xdstcarry);
+        output.bits[2] = numtk::BitDeposit(numtk::BitExtract(copy.bits[2 + blockshift], xsrcmask), xdstmask)
+            | numtk::BitDeposit(numtk::BitExtract(copy.bits[3 - blockshift], xsrccarry), xdstcarry);
 
-        output.bits[1] = numtk::BitDeposit(numtk::BitExtract(bits[1 - blockshift], xsrcmask), xdstmask)
-            | numtk::BitDeposit(numtk::BitExtract(bits[0 + blockshift], xsrccarry), xdstcarry);
-        output.bits[0] = numtk::BitDeposit(numtk::BitExtract(bits[0 + blockshift], xsrcmask), xdstmask)
-            | numtk::BitDeposit(numtk::BitExtract(bits[1 - blockshift], xsrccarry), xdstcarry);
+        output.bits[1] = numtk::BitDeposit(numtk::BitExtract(copy.bits[1 - blockshift], xsrcmask), xdstmask)
+            | numtk::BitDeposit(numtk::BitExtract(copy.bits[0 + blockshift], xsrccarry), xdstcarry);
+        output.bits[0] = numtk::BitDeposit(numtk::BitExtract(copy.bits[0 + blockshift], xsrcmask), xdstmask)
+            | numtk::BitDeposit(numtk::BitExtract(copy.bits[1 - blockshift], xsrccarry), xdstcarry);
     }
 
-    if (shift.y > 0)
+    if (shift.y != 0)
     {
+        VoxelMask copy = output;
+
         uint32_t const bitshift = (shift.y % 4) * 4;
-        uint32_t const blockshift = ((shift.y / 4) % 2) * 4;
+        uint32_t const blockshift = ((shift.y / 4) % 2) * 2;
 
         uint64_t const ydstmask = ((0xffffull << bitshift) & 0xffffull) * kBroadcastU16;
         uint64_t const ysrcmask = (0xffffull >> bitshift) * kBroadcastU16;
         uint64_t const ydstcarry = (0xffffull >> (16 - bitshift)) * kBroadcastU16;
         uint64_t const ysrccarry = ((0xffffull << (16 - bitshift)) & 0xffffull) * kBroadcastU16;
 
-        output.bits[7] = numtk::BitDeposit(numtk::BitExtract(bits[7 - blockshift], ysrcmask), ydstmask)
-            | numtk::BitDeposit(numtk::BitExtract(bits[3 + blockshift], ysrccarry), ydstcarry);
-        output.bits[3] = numtk::BitDeposit(numtk::BitExtract(bits[3 + blockshift], ysrcmask), ydstmask)
-            | numtk::BitDeposit(numtk::BitExtract(bits[7 - blockshift], ysrccarry), ydstcarry);
+        output.bits[7] = numtk::BitDeposit(numtk::BitExtract(copy.bits[7 - blockshift], ysrcmask), ydstmask)
+            | numtk::BitDeposit(numtk::BitExtract(copy.bits[5 + blockshift], ysrccarry), ydstcarry);
+        output.bits[5] = numtk::BitDeposit(numtk::BitExtract(copy.bits[5 + blockshift], ysrcmask), ydstmask)
+            | numtk::BitDeposit(numtk::BitExtract(copy.bits[7 - blockshift], ysrccarry), ydstcarry);
 
-        output.bits[6] = numtk::BitDeposit(numtk::BitExtract(bits[6 - blockshift], ysrcmask), ydstmask)
-            | numtk::BitDeposit(numtk::BitExtract(bits[2 + blockshift], ysrccarry), ydstcarry);
-        output.bits[2] = numtk::BitDeposit(numtk::BitExtract(bits[2 + blockshift], ysrcmask), ydstmask)
-            | numtk::BitDeposit(numtk::BitExtract(bits[6 - blockshift], ysrccarry), ydstcarry);
+        output.bits[6] = numtk::BitDeposit(numtk::BitExtract(copy.bits[6 - blockshift], ysrcmask), ydstmask)
+            | numtk::BitDeposit(numtk::BitExtract(copy.bits[4 + blockshift], ysrccarry), ydstcarry);
+        output.bits[4] = numtk::BitDeposit(numtk::BitExtract(copy.bits[4 + blockshift], ysrcmask), ydstmask)
+            | numtk::BitDeposit(numtk::BitExtract(copy.bits[6 - blockshift], ysrccarry), ydstcarry);
 
-        output.bits[5] = numtk::BitDeposit(numtk::BitExtract(bits[5 - blockshift], ysrcmask), ydstmask)
-            | numtk::BitDeposit(numtk::BitExtract(bits[1 + blockshift], ysrccarry), ydstcarry);
-        output.bits[1] = numtk::BitDeposit(numtk::BitExtract(bits[1 + blockshift], ysrcmask), ydstmask)
-            | numtk::BitDeposit(numtk::BitExtract(bits[5 - blockshift], ysrccarry), ydstcarry);
+        output.bits[3] = numtk::BitDeposit(numtk::BitExtract(copy.bits[3 - blockshift], ysrcmask), ydstmask)
+            | numtk::BitDeposit(numtk::BitExtract(copy.bits[1 + blockshift], ysrccarry), ydstcarry);
+        output.bits[1] = numtk::BitDeposit(numtk::BitExtract(copy.bits[1 + blockshift], ysrcmask), ydstmask)
+            | numtk::BitDeposit(numtk::BitExtract(copy.bits[3 - blockshift], ysrccarry), ydstcarry);
 
-        output.bits[4] = numtk::BitDeposit(numtk::BitExtract(bits[4 - blockshift], ysrcmask), ydstmask)
-            | numtk::BitDeposit(numtk::BitExtract(bits[0 + blockshift], ysrccarry), ydstcarry);
-        output.bits[0] = numtk::BitDeposit(numtk::BitExtract(bits[0 + blockshift], ysrcmask), ydstmask)
-            | numtk::BitDeposit(numtk::BitExtract(bits[4 - blockshift], ysrccarry), ydstcarry);
+        output.bits[2] = numtk::BitDeposit(numtk::BitExtract(copy.bits[2 - blockshift], ysrcmask), ydstmask)
+            | numtk::BitDeposit(numtk::BitExtract(copy.bits[0 + blockshift], ysrccarry), ydstcarry);
+        output.bits[0] = numtk::BitDeposit(numtk::BitExtract(copy.bits[0 + blockshift], ysrcmask), ydstmask)
+            | numtk::BitDeposit(numtk::BitExtract(copy.bits[2 - blockshift], ysrccarry), ydstcarry);
     }
 
-    if (shift.z > 0)
+    if (shift.z != 0)
     {
-        bits[0] = (shift.z < 4) ? bits[0] << (shift.z * 16) : 0ull;
-        bits[1] = (shift.z < 4) ? bits[1] << (shift.z * 16) : 0ull;
-        bits[2] = (shift.z < 4) ? bits[2] << (shift.z * 16) : 0ull;
-        bits[3] = (shift.z < 4) ? bits[3] << (shift.z * 16) : 0ull;
-        bits[4] = (shift.z < 4) ? bits[4] << (shift.z * 16) : 0ull;
-        bits[5] = (shift.z < 4) ? bits[5] << (shift.z * 16) : 0ull;
-        bits[6] = (shift.z < 4) ? bits[6] << (shift.z * 16) : 0ull;
-        bits[7] = (shift.z < 4) ? bits[7] << (shift.z * 16) : 0ull;
+        VoxelMask copy = output;
+
+        uint32_t const bitshift = (shift.z % 4) * 16;
+        uint32_t const blockshift = ((shift.z / 4) % 2) * 4;
+        uint32_t const bitcarry = (64 - bitshift);
+
+        if (bitcarry != 64)
+        {
+            output.bits[0] = (copy.bits[0 + blockshift] << bitshift) | (copy.bits[4 - blockshift] >> bitcarry);
+            output.bits[4] = (copy.bits[4 - blockshift] << bitshift) | (copy.bits[0 + blockshift] >> bitcarry);
+
+            output.bits[1] = (copy.bits[1 + blockshift] << bitshift) | (copy.bits[5 - blockshift] >> bitcarry);
+            output.bits[5] = (copy.bits[5 - blockshift] << bitshift) | (copy.bits[1 + blockshift] >> bitcarry);
+
+            output.bits[2] = (copy.bits[2 + blockshift] << bitshift) | (copy.bits[6 - blockshift] >> bitcarry);
+            output.bits[6] = (copy.bits[6 - blockshift] << bitshift) | (copy.bits[2 + blockshift] >> bitcarry);
+
+            output.bits[3] = (copy.bits[3 + blockshift] << bitshift) | (copy.bits[7 - blockshift] >> bitcarry);
+            output.bits[7] = (copy.bits[7 - blockshift] << bitshift) | (copy.bits[3 + blockshift] >> bitcarry);
+        }
+        else
+        {
+            output.bits[0] = copy.bits[0 + blockshift];
+            output.bits[4] = copy.bits[4 - blockshift];
+            output.bits[1] = copy.bits[1 + blockshift];
+            output.bits[5] = copy.bits[5 - blockshift];
+            output.bits[2] = copy.bits[2 + blockshift];
+            output.bits[6] = copy.bits[6 - blockshift];
+            output.bits[3] = copy.bits[3 + blockshift];
+            output.bits[7] = copy.bits[7 - blockshift];
+        }
     }
 
     return output;
