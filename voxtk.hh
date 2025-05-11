@@ -52,6 +52,9 @@ struct Region
 {
     struct Node;
 
+    static numtk::vec3u CellLocation(numtk::vec3u const& point) { return point / VoxelMask::kSize; }
+    static numtk::vec3u CellBegin(numtk::vec3u const& cell) { return cell * VoxelMask::kSize; }
+
     Region(numtk::vec3u _size, DataType const& _default_value);
     Region(Region&&) = default;
     Region& operator=(Region&&) = default;
@@ -68,6 +71,8 @@ struct Region
     void Set(numtk::vec3u const& begin, voxtk::Region<DataType> const& region);
 
     void Clear(numtk::vec3u const& begin, numtk::vec3u const& end);
+
+    Region BitwiseAnd(Region const& other, numtk::vec3u const& offset) const;
 
     Node* FindLeaf(numtk::vec3u const& point) const;
     uint64_t ExtractKernel(numtk::vec3u const& base) const;
@@ -390,6 +395,38 @@ void Region<DataType>::Clear(numtk::vec3u const& begin, numtk::vec3u const& end)
                     }
         }
     }
+}
+
+template <typename DataType>
+Region<DataType> Region<DataType>::BitwiseAnd(Region const& other, numtk::vec3u const& offset) const
+{
+    numtk::bounds3u const src_bounds{ numtk::vec3u::Constant(0), size };
+    numtk::bounds3u const dst_bounds{ offset, other.size };
+    numtk::bounds3u const op_bounds = src_bounds.Intersection(dst_bounds);
+
+    // align begin + compute offset
+    numtk::vec3u const first_cell = Region<DataType>::CellLocation(op_bounds.min);
+    numtk::vec3u const last_cell = Region<DataType>::CellLocation(op_bounds.min + op_bounds.extent);
+    numtk::vec3u const cell_offset = op_bounds.min - Region<DataType>::CellBegin(first_cell);
+
+    // step through all cells
+    //numtk::vec3u const src_first_cell = Region<DataType>::CellLocation();
+    numtk::vec3u const cell_extent = last_cell - first_cell;
+    for (uint32_t cell_z = 0u; cell_z < cell_extent.z; ++cell_z)
+        for (uint32_t cell_y = 0u; cell_y < cell_extent.y; ++cell_y)
+            for (uint32_t cell_x = 0u; cell_x < cell_extent.x; ++cell_x)
+            {
+                // get voxel mask from src
+                // get voxel mask from dst
+                // align and mask
+                // apply operator
+            }
+
+    // update hierarchy
+    // ???
+    // PROFIT
+
+    return *this;
 }
 
 template <typename DataType>
