@@ -846,8 +846,7 @@ VoxelMask& VoxelMask::Set(numtk::vec3u const& point, bool v)
 
 VoxelMask& VoxelMask::Set(numtk::vec3u const& begin, numtk::vec3u const& end, bool v)
 {
-    VoxelMask mask{};
-    mask.FillArea(begin, end);
+    VoxelMask mask = VoxelMask::FillArea(begin, end);
     if (v)
         *this = BitwiseOr(mask);
     else
