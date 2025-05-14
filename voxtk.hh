@@ -13,6 +13,9 @@ struct VoxelMask
     static constexpr uint32_t kSizeMask = 0x7u;
     static constexpr int32_t kVolume = kSize*kSize*kSize;
 
+    static constexpr VoxelMask kFullMask() { return VoxelMask{ ~0ull, ~0ull, ~0ull, ~0ull, ~0ull, ~0ull, ~0ull, ~0ull }; }
+    static constexpr VoxelMask kEmptyMask() { return VoxelMask{ 0ull, 0ull, 0ull, 0ull, 0ull, 0ull, 0ull, 0ull }; }
+
     static uint64_t PackFillMask(numtk::vec3u const& begin);
 
     static VoxelMask FillAbove(numtk::vec3u const& begin);
@@ -73,6 +76,9 @@ struct Region
     void Clear(numtk::vec3u const& begin, numtk::vec3u const& end);
 
     Region BitwiseAnd(Region const& other, numtk::vec3u const& offset) const;
+
+    VoxelMask GetCell(numtk::vec3u const& cell) const;
+    void SetCell(numtk::vec3u const& cell, VoxelMask const& mask);
 
     Node* FindLeaf(numtk::vec3u const& point) const;
     uint64_t ExtractKernel(numtk::vec3u const& base) const;
@@ -427,6 +433,27 @@ Region<DataType> Region<DataType>::BitwiseAnd(Region const& other, numtk::vec3u 
     // PROFIT
 
     return *this;
+}
+
+template <typename DataType>
+VoxelMask Region<DataType>::GetCell(numtk::vec3u const& cell) const
+{
+    numtk::vec3u cell_begin = Region<DataType>::CellBegin(cell);
+    Node* leaf = FindLeaf(cell_begin);
+    if (!leaf)
+        return VoxelMask::kEmptyMask;
+
+    if (!leaf->depth)
+        return leaf->data_mask;
+    else
+        return leaf->child_mask.Test(leaf->LocalPoint(cell_begin))
+            ? VoxelMask::kFullMask
+            : VoxelMask::kEmptyMask;
+}
+
+template <typename DataType>
+void Region<DataType>::SetCell(numtk::vec3u const& cell, VoxelMask const& mask)
+{
 }
 
 template <typename DataType>
