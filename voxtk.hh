@@ -77,6 +77,7 @@ struct Region
 
     Region BitwiseAnd(Region const& other, numtk::vec3u const& offset) const;
 
+    Node* MakeCell(numtk::vec3u const& cell);
     VoxelMask GetCell(numtk::vec3u const& cell) const;
     void SetCell(numtk::vec3u const& cell, VoxelMask const& mask);
 
@@ -416,14 +417,21 @@ Region<DataType> Region<DataType>::BitwiseAnd(Region const& other, numtk::vec3u 
     numtk::vec3u const cell_offset = op_bounds.min - Region<DataType>::CellBegin(first_cell);
 
     // step through all cells
-    //numtk::vec3u const src_first_cell = Region<DataType>::CellLocation();
+    numtk::vec3u const dst_first_cell = first_cell;
+    numtk::vec3u const src_first_cell = first_cell-cell_offset;
+
     numtk::vec3u const cell_extent = last_cell - first_cell;
     for (uint32_t cell_z = 0u; cell_z < cell_extent.z; ++cell_z)
         for (uint32_t cell_y = 0u; cell_y < cell_extent.y; ++cell_y)
             for (uint32_t cell_x = 0u; cell_x < cell_extent.x; ++cell_x)
             {
+                numtk::vec3u const cell_index{ cell_x, cell_y, cell_z };
                 // get voxel mask from src
+                numtk::vec3u const src_cell = src_first_cell + cell_index;
+                VoxelMask src_mask = other.GetCell(src_cell);
                 // get voxel mask from dst
+                numkt::vec3u const dst_cell = dst_first_cell + cell_index;
+                VoxelMask dst_mask = GetCell(dst_cell);
                 // align and mask
                 // apply operator
             }
@@ -436,10 +444,20 @@ Region<DataType> Region<DataType>::BitwiseAnd(Region const& other, numtk::vec3u 
 }
 
 template <typename DataType>
+Node* Region<DataType>::MakeCell(numtk::vec3u const& cell)
+{
+    numtk::vec3u cell_begin = Region<DataType>::CellBegin(cell);
+    Node* current_node = FindLeaf(cell_begin);
+    while (current_node->depth)
+        current_node = InsertChild(current_node, current_node->LocalPoint(cell_begin));
+    return current_node;
+}
+
+template <typename DataType>
 VoxelMask Region<DataType>::GetCell(numtk::vec3u const& cell) const
 {
     numtk::vec3u cell_begin = Region<DataType>::CellBegin(cell);
-    Node* leaf = FindLeaf(cell_begin);
+    Node const* leaf = FindLeaf(cell_begin);
     if (!leaf)
         return VoxelMask::kEmptyMask;
 
@@ -454,6 +472,9 @@ VoxelMask Region<DataType>::GetCell(numtk::vec3u const& cell) const
 template <typename DataType>
 void Region<DataType>::SetCell(numtk::vec3u const& cell, VoxelMask const& mask)
 {
+    numtk::vec3u cell_begin = Region<DataType>::CellBegin(cell);
+    Node* cell = MakeCell(cell_begin);
+    cell->data_mask = mask;
 }
 
 template <typename DataType>
