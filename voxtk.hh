@@ -62,6 +62,7 @@ struct Region
     Region(Region&&) = default;
     Region& operator=(Region&&) = default;
     Region(Region const& _other);
+    Region& operator=(Region const&);
 
     DataType const& operator[](uint32_t const& index) const;
     DataType const& operator[](numtk::vec3u const& point) const;
@@ -145,6 +146,30 @@ template <typename DataType>
 Region<DataType>::Region(Region const& _other)
     : Region<DataType>{ _other.size, _other.default_value }
 {
+    *root = *_other.root;
+    std::vector<Node*> node_queue = { root };
+
+    while (!node_queue.empty())
+    {
+        Node* current_node = node_queue.back();
+        node_queue.pop_back();
+
+        uint16_t child_index = current_node->child_mask.NextIndex();
+        while (child_index < 512)
+        {
+            Node* new_node = node_pool[node_pool.Reserve()];
+            *new_node = *(current_node->children[child_index]);
+            current_node->children[child_index] = new_node;
+            node_queue.push_back(new_node);
+            child_index = current_node->child_mask.NextIndex(child_index);
+        }
+    }
+}
+
+template <typename DataType>
+Region<DataType>& Region<DataType>::operator=(Region const& _other)
+{
+    Clear();
     *root = *_other.root;
     std::vector<Node*> node_queue = { root };
 
@@ -407,18 +432,21 @@ void Region<DataType>::Clear(numtk::vec3u const& begin, numtk::vec3u const& end)
 template <typename DataType>
 Region<DataType> Region<DataType>::BitwiseAnd(Region const& other, numtk::vec3u const& offset) const
 {
+    Region<DataType> output{ *this };
+
     numtk::bounds3u const src_bounds{ numtk::vec3u::Constant(0), size };
     numtk::bounds3u const dst_bounds{ offset, other.size };
     numtk::bounds3u const op_bounds = src_bounds.Intersection(dst_bounds);
 
     // align begin + compute offset
     numtk::vec3u const first_cell = Region<DataType>::CellLocation(op_bounds.min);
-    numtk::vec3u const last_cell = Region<DataType>::CellLocation(op_bounds.min + op_bounds.extent);
-    numtk::vec3u const cell_offset = op_bounds.min - Region<DataType>::CellBegin(first_cell);
+    numtk::vec3u const last_cell =
+        Region<DataType>::CellLocation(op_bounds.min + op_bounds.extent + numtk::vec3u::Constant(VoxelMask::kSize-1));
+    numtk::vec3i const bit_offset = (op_bounds.min - Region<DataType>::CellBegin(first_cell)).cast<int32_t>();
 
     // step through all cells
     numtk::vec3u const dst_first_cell = first_cell;
-    numtk::vec3u const src_first_cell = first_cell-cell_offset;
+    numtk::vec3u const src_first_cell = numtk::vec3u::Constant(0);
 
     numtk::vec3u const cell_extent = last_cell - first_cell;
     for (uint32_t cell_z = 0u; cell_z < cell_extent.z; ++cell_z)
@@ -433,14 +461,16 @@ Region<DataType> Region<DataType>::BitwiseAnd(Region const& other, numtk::vec3u 
                 numtk::vec3u const dst_cell = dst_first_cell + cell_index;
                 VoxelMask dst_mask = GetCell(dst_cell);
                 // align and mask
+                src_mask = src_mask.Shift(bit_offset).BitwiseAnd(VoxelMask::FillAbove(bit_offset.cast<uint32_t>()));
                 // apply operator
+                output.SetCell(dst_cell, dst_mask.BitwiseAnd(src_mask));
             }
 
     // update hierarchy
     // ???
     // PROFIT
 
-    return *this;
+    return output;
 }
 
 template <typename DataType>
@@ -472,9 +502,8 @@ VoxelMask Region<DataType>::GetCell(numtk::vec3u const& cell) const
 template <typename DataType>
 void Region<DataType>::SetCell(numtk::vec3u const& cell, VoxelMask const& mask)
 {
-    numtk::vec3u cell_begin = Region<DataType>::CellBegin(cell);
-    Node* cell = MakeCell(cell_begin);
-    cell->data_mask = mask;
+    Node* node = MakeCell(cell);
+    node->data_mask = mask;
 }
 
 template <typename DataType>
