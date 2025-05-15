@@ -430,7 +430,7 @@ Region<DataType> Region<DataType>::BitwiseAnd(Region const& other, numtk::vec3u 
                 numtk::vec3u const src_cell = src_first_cell + cell_index;
                 VoxelMask src_mask = other.GetCell(src_cell);
                 // get voxel mask from dst
-                numkt::vec3u const dst_cell = dst_first_cell + cell_index;
+                numtk::vec3u const dst_cell = dst_first_cell + cell_index;
                 VoxelMask dst_mask = GetCell(dst_cell);
                 // align and mask
                 // apply operator
@@ -444,7 +444,7 @@ Region<DataType> Region<DataType>::BitwiseAnd(Region const& other, numtk::vec3u 
 }
 
 template <typename DataType>
-Node* Region<DataType>::MakeCell(numtk::vec3u const& cell)
+typename Region<DataType>::Node* Region<DataType>::MakeCell(numtk::vec3u const& cell)
 {
     numtk::vec3u cell_begin = Region<DataType>::CellBegin(cell);
     Node* current_node = FindLeaf(cell_begin);
@@ -459,14 +459,14 @@ VoxelMask Region<DataType>::GetCell(numtk::vec3u const& cell) const
     numtk::vec3u cell_begin = Region<DataType>::CellBegin(cell);
     Node const* leaf = FindLeaf(cell_begin);
     if (!leaf)
-        return VoxelMask::kEmptyMask;
+        return VoxelMask::kEmptyMask();
 
     if (!leaf->depth)
         return leaf->data_mask;
     else
         return leaf->child_mask.Test(leaf->LocalPoint(cell_begin))
-            ? VoxelMask::kFullMask
-            : VoxelMask::kEmptyMask;
+            ? VoxelMask::kFullMask()
+            : VoxelMask::kEmptyMask();
 }
 
 template <typename DataType>
