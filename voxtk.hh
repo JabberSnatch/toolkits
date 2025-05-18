@@ -432,7 +432,7 @@ void Region<DataType>::Clear(numtk::vec3u const& begin, numtk::vec3u const& end)
 template <typename DataType>
 Region<DataType> Region<DataType>::BitwiseAnd(Region const& other, numtk::vec3u const& offset) const
 {
-    Region<DataType> output{ *this };
+    Region<DataType> output(size, default_value);
 
     numtk::bounds3u const src_bounds{ numtk::vec3u::Constant(0), size };
     numtk::bounds3u const dst_bounds{ offset, other.size };
