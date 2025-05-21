@@ -65,6 +65,9 @@ struct vec3
 
     static vec3<scalar> Constant(scalar v) { return vec3<scalar>{ v, v, v }; }
 
+    bool operator==(vec3 const& o) const { return x == o.x && y == o.y && z == o.z; }
+    bool operator!=(vec3 const& o) const { return !(*this == o); }
+
     vec3 operator+(vec3 const& o) const { return { x+o.x, y+o.y, z+o.z }; }
     vec3& operator+=(vec3 const& o) { x+=o.x; y+=o.y; z+=o.z; return *this; }
     vec3 operator-(vec3 const& o) const { return { x-o.x, y-o.y, z-o.z }; }
