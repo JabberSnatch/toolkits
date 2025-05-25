@@ -32,6 +32,8 @@ struct VoxelMask
     VoxelMask BitwiseOr(VoxelMask const& o) const;
     VoxelMask BitwiseNot() const;
 
+    VoxelMask SelectOctant(numtk::vec3u const& junction, uint32_t index) const;
+
     VoxelMask Shift(numtk::vec3i const& shift);
 
     bool Test(numtk::vec3u const& point) const;
@@ -47,7 +49,6 @@ struct VoxelMask
 
     uint64_t bits[8];
 };
-
 
 #define DENSE_CHILDREN_ARRAY
 template <typename DataType>
@@ -77,6 +78,8 @@ struct Region
     void Clear(numtk::vec3u const& begin, numtk::vec3u const& end);
 
     Region BitwiseAnd(Region const& other, numtk::vec3u const& offset) const;
+
+    Region Shift(numtk::vec3u const& offset) const;
 
     Node* MakeCell(numtk::vec3u const& cell);
     VoxelMask GetCell(numtk::vec3u const& cell) const;
@@ -447,6 +450,7 @@ Region<DataType> Region<DataType>::BitwiseAnd(Region const& other, numtk::vec3u 
     // step through all cells
     numtk::vec3u const dst_first_cell = first_cell;
     numtk::vec3u const src_first_cell = numtk::vec3u::Constant(0);
+    numtk::vec3u const dst_last_cell = Region<DataType>::CellLocation(other.size + numtk::vec3u::Constant(VoxelMask::kSize-1));
 
     numtk::vec3u const cell_extent = last_cell - first_cell;
     for (uint32_t cell_z = 0u; cell_z < cell_extent.z; ++cell_z)
@@ -469,6 +473,34 @@ Region<DataType> Region<DataType>::BitwiseAnd(Region const& other, numtk::vec3u 
     // update hierarchy
     // ???
     // PROFIT
+
+    return output;
+}
+
+template <typename DataType>
+Region<DataType> Region<DataType>::Shift(numtk::vec3u const& offset) const
+{
+    Region output{ size + offset, default_value };
+
+    numtk::vec3i const bit_offset = offset.cast<int32_t>() % VoxelMask::kSize;
+    numtk::vec3i const cell_offset = offset.cast<int32_t>() / VoxelMask::kSize;
+
+    numtk::vec3u const cell_extent = Region::CellLocation(size + numtk::vec3u::Constant(VoxelMask::kSize-1));
+    for (uint32_t cell_z = 0u; cell_z < cell_extent.z; ++cell_z)
+        for (uint32_t cell_y = 0u; cell_y < cell_extent.y; ++cell_y)
+            for (uint32_t cell_x = 0u; cell_x < cell_extent.x; ++cell_x)
+            {
+                numtk::vec3u const cell_index{ cell_x, cell_y, cell_z };
+                numtk::vec3u const dst_cell = cell_index + cell_offset.cast<uint32_t>();
+                VoxelMask src_mask = GetCell(cell_index).Shift(bit_offset);
+                for (uint32_t mask_index = 0; mask_index < 8; ++mask_index)
+                {
+                    numtk::vec3u const mask_offset{ mask_index & 1, (mask_index >> 1) & 1, mask_index >> 2 };
+                    VoxelMask dst_mask = output.GetCell(dst_cell + mask_offset);
+                    dst_mask = dst_mask.BitwiseOr(src_mask.SelectOctant(bit_offset.cast<uint32_t>(), mask_index));
+                    output.SetCell(dst_cell + mask_offset, dst_mask);
+                }
+            }
 
     return output;
 }
@@ -817,6 +849,23 @@ VoxelMask VoxelMask::BitwiseNot() const
     output.bits[6] = ~bits[6];
     output.bits[7] = ~bits[7];
     return output;
+}
+
+VoxelMask VoxelMask::SelectOctant(numtk::vec3u const& junction, uint32_t index) const
+{
+    VoxelMask x_mask = VoxelMask::FillAbove({ junction.x, 0, 0 });
+    if (!(index & 1))
+        x_mask.BitReverse();
+
+    VoxelMask y_mask = VoxelMask::FillAbove({ 0, junction.y, 0 });
+    if (!((index >> 1) & 1))
+        y_mask.BitReverse();
+
+    VoxelMask z_mask = VoxelMask::FillAbove({ 0, 0, junction.z });
+    if (!((index >> 2) & 1))
+        z_mask.BitReverse();
+
+    return BitwiseAnd(x_mask.BitwiseAnd(y_mask).BitwiseAnd(z_mask));
 }
 
 VoxelMask VoxelMask::Shift(numtk::vec3i const& shift)
