@@ -438,44 +438,21 @@ void Region<DataType>::Clear(numtk::vec3u const& begin, numtk::vec3u const& end)
 template <typename DataType>
 Region<DataType> Region<DataType>::BitwiseAnd(Region const& other, numtk::vec3u const& offset) const
 {
-    Region<DataType> output(size, default_value);
+    Region output(size, default_value);
+    Region rhs = other.Shift(offset);
 
-    numtk::bounds3u const src_bounds{ numtk::vec3u::Constant(0), size };
-    numtk::bounds3u const dst_bounds{ offset, other.size };
-    numtk::bounds3u const op_bounds = src_bounds.Intersection(dst_bounds);
+    numtk::vec3u const cell_extent = numtk::min(
+        Region::CellLocation(size + numtk::vec3u::Constant(VoxelMask::kSize-1)),
+        Region::CellLocation(rhs.size + numtk::vec3u::Constant(VoxelMask::kSize-1)));
 
-    // align begin + compute offset
-    numtk::vec3u const first_cell = Region<DataType>::CellLocation(op_bounds.min);
-    numtk::vec3u const last_cell =
-        Region<DataType>::CellLocation(op_bounds.min + op_bounds.extent + numtk::vec3u::Constant(VoxelMask::kSize-1));
-    numtk::vec3i const bit_offset = (op_bounds.min - Region<DataType>::CellBegin(first_cell)).cast<int32_t>();
-
-    // step through all cells
-    numtk::vec3u const dst_first_cell = first_cell;
-    numtk::vec3u const src_first_cell = numtk::vec3u::Constant(0);
-    numtk::vec3u const dst_last_cell = Region<DataType>::CellLocation(other.size + numtk::vec3u::Constant(VoxelMask::kSize-1));
-
-    numtk::vec3u const cell_extent = last_cell - first_cell;
     for (uint32_t cell_z = 0u; cell_z < cell_extent.z; ++cell_z)
         for (uint32_t cell_y = 0u; cell_y < cell_extent.y; ++cell_y)
             for (uint32_t cell_x = 0u; cell_x < cell_extent.x; ++cell_x)
             {
                 numtk::vec3u const cell_index{ cell_x, cell_y, cell_z };
-                // get voxel mask from src
-                numtk::vec3u const src_cell = src_first_cell + cell_index;
-                VoxelMask src_mask = other.GetCell(src_cell);
-                // get voxel mask from dst
-                numtk::vec3u const dst_cell = dst_first_cell + cell_index;
-                VoxelMask dst_mask = GetCell(dst_cell);
-                // align and mask
-                src_mask = src_mask.Shift(bit_offset).BitwiseAnd(VoxelMask::FillAbove(bit_offset.cast<uint32_t>()));
-                // apply operator
-                output.SetCell(dst_cell, dst_mask.BitwiseAnd(src_mask));
+                VoxelMask output_mask = GetCell(cell_index).BitwiseAnd(rhs.GetCell(cell_index));
+                output.SetCell(cell_index, output_mask);
             }
-
-    // update hierarchy
-    // ???
-    // PROFIT
 
     return output;
 }
