@@ -356,6 +356,7 @@ struct bounds3
     using PointType = vec3<scalar>;
     PointType min;
     PointType extent;
+
     bool Contains(PointType const& point) {
         PointType max = min+extent;
         return point.x >= min.x && point.x < max.x
@@ -367,6 +368,14 @@ struct bounds3
         bounds3 output = {};
         output.min = numtk::max(min, other.min);
         PointType max = numtk::min((min+extent), (other.min+other.extent));
+        output.extent = max - output.min;
+        return output;
+    }
+
+    bounds3 Expand(PointType const& point) const {
+        bounds3 output = {};
+        output.min = numtk::max(min, point);
+        PointType max = numtk::min((min+extent), point);
         output.extent = max - output.min;
         return output;
     }
