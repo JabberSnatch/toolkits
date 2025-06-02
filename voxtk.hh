@@ -125,29 +125,37 @@ struct Region
 
 struct BinaryRegion
 {
-    BinaryRegion() = default;
+    static numtk::vec3u CellLocation(numtk::vec3u const& _point) { return _point / VoxelMask::kSize; }
+    static numtk::vec3u CellBegin(numtk::vec3u const& _cell_location) { return _cell_location * VoxelMask::kSize; }
+
+    BinaryRegion(numtk::vec3u _size);
     BinaryRegion(BinaryRegion&&) = default;
     BinaryRegion(BinaryRegion const&);
     BinaryRegion& operator=(BinaryRegion&&) = default;
     BinaryRegion& operator=(BinaryRegion const&);
 
-    bool Test(numtk::vec3i const& _point) const;
-    BinaryRegion Test(numtk::bounds3i const& _bounds) const;
+    bool Contains(numtk::vec3u const& _point) const { return _point.x < size.x && _point.y < size.y && _point.z < size.z; }
 
-    void Set(numtk::vec3i const& _point, bool _v);
+    bool Test(numtk::vec3u const& _point) const;
+    BinaryRegion Test(numtk::bounds3u const& _bounds) const;
+
+    void Set(numtk::vec3u const& _point, bool _v);
     void Set(numtk::vec3i const& _begin, BinaryRegion const& _v);
 
     BinaryRegion BitwiseAnd(numtk::vec3i const& _begin, BinaryRegion const& _o);
     BinaryRegion BitwiseOr(numtk::vec3i const& _begin, BinaryRegion const& _o);
     BinaryRegion Shift(numtk::vec3i const& _offset);
 
-    void Clear() { Clear(bounds); }
-    void Clear(numtk::bounds3i const& _bounds);
+    void Clear() { Clear({ numtk::vec3u::Constant(0), size }); }
+    void Clear(numtk::bounds3u const& _bounds);
+
+    BinaryRegion Crop(numtk::bounds3i const& _bounds) const;
 
     struct Node {
         Node* parent;
-        numtk::vec3i location;
+        numtk::vec3u location;
         uint32_t depth;
+
         VoxelMask child_mask{};
         VoxelMask data_mask{};
 #ifndef DENSE_CHILDREN_ARRAY
@@ -155,15 +163,26 @@ struct BinaryRegion
 #else
         std::vector<Node*> children = std::vector<Node*>(VoxelMask::kVolume);
 #endif
+
+        numtk::vec3u LocalPoint(numtk::vec3u const& _point) const {
+            return (_point >> (3 * depth)) & VoxelMask::kSizeMask;
+        }
+        uint16_t ChildIndex(numtk::vec3u const& _child) const {
+            return VoxelMask::BitIndex(_child);
+        }
     };
 
-    Node* MakeCell(numtk::vec3i const& _cell_location);
-    VoxelMask GetCell(numtk::vec3i const& _cell_location) const;
-    void SetCell(numtk::vec3i const& _cell_location, VoxelMask const& _mask);
+    Node* MakeCell(numtk::vec3u const& _cell_location);
+    VoxelMask GetCell(numtk::vec3u const& _cell_location) const;
+    void SetCell(numtk::vec3u const& _cell_location, VoxelMask const& _mask);
+
+    Node* FindDeepestNode(numtk::vec3u const& _point) const;
+    Node* InsertChild(Node* _parent, numtk::vec3u const& _local_point);
 
     Node* root = nullptr;
     dstk::ObjectPool<Node> node_pool{};
-    numtk::bounds3i bounds;
+    numtk::vec3u size;
+    uint32_t level_count;
 };
 
 } // namespace voxtk
@@ -689,7 +708,64 @@ uint16_t Region<DataType>::Node::ChildIndex(numtk::vec3u const& child) {
 namespace voxtk
 {
 
+BinaryRegion::Node*
+BinaryRegion::MakeCell(numtk::vec3u const& _cell_location)
+{
+    numtk::vec3u cell_begin = BinaryRegion::CellBegin(_cell_location);
+    Node* current_node = FindDeepestNode(cell_begin);
+    while (current_node->depth)
+        current_node = InsertChild(current_node, current_node->LocalPoint(cell_begin));
+    return current_node;
+}
 
+BinaryRegion::Node*
+BinaryRegion::FindDeepestNode(numtk::vec3u const& _point) const
+{
+    if (!Contains(_point)) return nullptr;
+
+    Node* current_node = root;
+    while (current_node)
+    {
+        numtk::vec3u local_point = current_node->LocalPoint(_point);
+        if (!current_node->child_mask.Test(local_point))
+            break;
+        else
+        {
+            uint16_t point_index = current_node->ChildIndex(local_point);
+            current_node = current_node->children[point_index];
+        }
+    }
+
+    return current_node;
+}
+
+BinaryRegion::Node*
+BinaryRegion::InsertChild(Node* _parent, numtk::vec3u const& _local_point)
+{
+    uint16_t point_index = _parent->ChildIndex(_local_point);
+
+#ifndef DENSE_CHILDREN_ARRAY
+    auto child_node =
+        _parent->children.insert(point_index, node_pool[node_pool.Reserve()]);
+
+    (*child_node)->parent = _parent;
+    (*child_node)->location = _local_point;
+    (*child_node)->depth = _parent->depth - 1;
+    _parent->child_mask.Set(_local_point, true);
+
+    return *child_node;
+#else
+    Node* child_node = node_pool[node_pool.Reserve()];
+    _parent->children[point_index] = child_node;
+
+    child_node->parent = _parent;
+    child_node->location = _local_point;
+    child_node->depth = _parent->depth - 1;
+    _parent->child_mask.Set(_local_point, true);
+
+    return child_node;
+#endif
+}
 
 uint64_t VoxelMask::PackFillMask(numtk::vec3u const& begin)
 {
