@@ -123,6 +123,49 @@ struct Region
     DataType default_value;
 };
 
+struct BinaryRegion
+{
+    BinaryRegion() = default;
+    BinaryRegion(BinaryRegion&&) = default;
+    BinaryRegion(BinaryRegion const&);
+    BinaryRegion& operator=(BinaryRegion&&) = default;
+    BinaryRegion& operator=(BinaryRegion const&);
+
+    bool Test(numtk::vec3i const& _point) const;
+    BinaryRegion Test(numtk::bounds3i const& _bounds) const;
+
+    void Set(numtk::vec3i const& _point, bool _v);
+    void Set(numtk::vec3i const& _begin, BinaryRegion const& _v);
+
+    BinaryRegion BitwiseAnd(numtk::vec3i const& _begin, BinaryRegion const& _o);
+    BinaryRegion BitwiseOr(numtk::vec3i const& _begin, BinaryRegion const& _o);
+    BinaryRegion Shift(numtk::vec3i const& _offset);
+
+    void Clear() { Clear(bounds); }
+    void Clear(numtk::bounds3i const& _bounds);
+
+    struct Node {
+        Node* parent;
+        numtk::vec3i location;
+        uint32_t depth;
+        VoxelMask child_mask{};
+        VoxelMask data_mask{};
+#ifndef DENSE_CHILDREN_ARRAY
+        dstk::OrderedVector<uint16_t, Node*> children{};
+#else
+        std::vector<Node*> children = std::vector<Node*>(VoxelMask::kVolume);
+#endif
+    };
+
+    Node* MakeCell(numtk::vec3i const& _cell_location);
+    VoxelMask GetCell(numtk::vec3i const& _cell_location) const;
+    void SetCell(numtk::vec3i const& _cell_location, VoxelMask const& _mask);
+
+    Node* root = nullptr;
+    dstk::ObjectPool<Node> node_pool{};
+    numtk::bounds3i bounds;
+};
+
 } // namespace voxtk
 
 namespace voxtk
@@ -645,6 +688,8 @@ uint16_t Region<DataType>::Node::ChildIndex(numtk::vec3u const& child) {
 
 namespace voxtk
 {
+
+
 
 uint64_t VoxelMask::PackFillMask(numtk::vec3u const& begin)
 {
