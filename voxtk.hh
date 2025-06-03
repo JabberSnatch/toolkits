@@ -128,6 +128,7 @@ struct BinaryRegion
     static numtk::vec3u CellLocation(numtk::vec3u const& _point) { return _point / VoxelMask::kSize; }
     static numtk::vec3u CellBegin(numtk::vec3u const& _cell_location) { return _cell_location * VoxelMask::kSize; }
 
+    BinaryRegion() : BinaryRegion(numtk::vec3u::Constant(0)) {};
     BinaryRegion(numtk::vec3u _size);
     BinaryRegion(BinaryRegion&&) = default;
     BinaryRegion(BinaryRegion const&);
@@ -137,19 +138,21 @@ struct BinaryRegion
     bool Contains(numtk::vec3u const& _point) const { return _point.x < size.x && _point.y < size.y && _point.z < size.z; }
 
     bool Test(numtk::vec3u const& _point) const;
-    BinaryRegion Test(numtk::bounds3u const& _bounds) const;
 
     void Set(numtk::vec3u const& _point, bool _v);
+    void Set(numtk::bounds3u const& _bounds, bool _v);
     void Set(numtk::vec3i const& _begin, BinaryRegion const& _v);
 
-    BinaryRegion BitwiseAnd(numtk::vec3i const& _begin, BinaryRegion const& _o);
-    BinaryRegion BitwiseOr(numtk::vec3i const& _begin, BinaryRegion const& _o);
-    BinaryRegion Shift(numtk::vec3i const& _offset);
+    BinaryRegion Shift(numtk::vec3i const& _offset) const;
+    BinaryRegion Crop(numtk::bounds3u const& _bounds) const;
+
+    BinaryRegion BitwiseAnd(numtk::vec3i const& _begin, BinaryRegion const& _o) const;
+    BinaryRegion BitwiseOr(numtk::vec3i const& _begin, BinaryRegion const& _o) const;
+
+    void Fill(numtk::bounds3u const& _bounds) { Set(_bounds, true); }
 
     void Clear() { Clear({ numtk::vec3u::Constant(0), size }); }
-    void Clear(numtk::bounds3u const& _bounds);
-
-    BinaryRegion Crop(numtk::bounds3i const& _bounds) const;
+    void Clear(numtk::bounds3u const& _bounds) { Set(_bounds, false); }
 
     struct Node {
         Node* parent;
@@ -164,6 +167,9 @@ struct BinaryRegion
         std::vector<Node*> children = std::vector<Node*>(VoxelMask::kVolume);
 #endif
 
+        numtk::bounds3u Bounds() const {
+            return { location * (1u << (3*(depth+1))), numtk::vec3u::Constant(VoxelMask::kSize) };
+        }
         numtk::vec3u LocalPoint(numtk::vec3u const& _point) const {
             return (_point >> (3 * depth)) & VoxelMask::kSizeMask;
         }
@@ -173,8 +179,8 @@ struct BinaryRegion
     };
 
     Node* MakeCell(numtk::vec3u const& _cell_location);
-    VoxelMask GetCell(numtk::vec3u const& _cell_location) const;
-    void SetCell(numtk::vec3u const& _cell_location, VoxelMask const& _mask);
+    VoxelMask GetCellMask(numtk::vec3u const& _cell_location) const;
+    void SetCellMask(numtk::vec3u const& _cell_location, VoxelMask const& _mask);
 
     Node* FindDeepestNode(numtk::vec3u const& _point) const;
     Node* InsertChild(Node* _parent, numtk::vec3u const& _local_point);
@@ -708,6 +714,154 @@ uint16_t Region<DataType>::Node::ChildIndex(numtk::vec3u const& child) {
 namespace voxtk
 {
 
+BinaryRegion::BinaryRegion(numtk::vec3u _size)
+    : level_count{ 0u }
+    , size{ _size}
+{
+    uint32_t max_size = std::max(std::max(_size.x, _size.y), _size.z);
+    uint32_t log_size = numtk::ilogN<VoxelMask::kSize>(max_size);
+
+    if (1u << (VoxelMask::kLogSize * log_size) < max_size)
+        ++log_size;
+
+    level_count = std::max(log_size, 1u);
+
+    root = node_pool[node_pool.Reserve()];
+    root->parent = nullptr;
+    root->location = numtk::vec3u{ 0, 0, 0 };
+    root->depth = level_count - 1;
+}
+
+bool
+BinaryRegion::Test(numtk::vec3u const& _point) const
+{
+    Node const* node = FindDeepestNode(_point);
+    if (!node)
+        return false;
+    else if (!node->depth)
+        return node->data_mask.Test(node->LocalPoint(_point));
+    else
+        return node->child_mask.Test(node->LocalPoint(_point));
+}
+
+void
+BinaryRegion::Set(numtk::vec3u const& _point, bool _v)
+{
+    Node* node = FindDeepestNode(_point);
+    if (!node
+        || (node->depth && (node->data_mask.Test(node->LocalPoint(_point))) != _v))
+        node = MakeCell(_point);
+
+    if (!node->depth)
+        node->data_mask.Set(node->LocalPoint(_point), _v);
+}
+
+void
+BinaryRegion::Set(numtk::bounds3u const& _bounds, bool _v)
+{
+    numtk::vec3u const set_end = _bounds.min + _bounds.extent;
+
+    std::vector<Node*> node_queue{ root };
+    while (!node_queue.empty())
+    {
+        Node* current_node = node_queue.back();
+        node_queue.pop_back();
+
+        numtk::bounds3u const node_bounds = current_node->Bounds();
+
+        if (!current_node->depth)
+        {
+            numtk::vec3u const data_begin =
+                numtk::max(_bounds.min, node_bounds.min) - node_bounds.min;
+            numtk::vec3u const data_end =
+                numtk::min(set_end, node_bounds.min + node_bounds.extent) - node_bounds.min;
+
+            current_node->data_mask.Set(data_begin, data_end, _v);
+        }
+        else
+        {
+            numtk::vec3u const children_begin =
+                numtk::max(_bounds.min >> (3*(current_node->depth)),
+                           node_bounds.min);
+            numtk::vec3u const children_end =
+                numtk::min((set_end >> (3*(current_node->depth)))
+                           + numtk::vec3u::Constant(1u),
+                           node_bounds.min + node_bounds.extent);
+
+            for (uint32_t z = children_begin.z; z < children_end.z; ++z)
+                for (uint32_t y = children_begin.y; y < children_end.y; ++y)
+                    for (uint32_t x = children_begin.x; x < children_end.x; ++x)
+                    {
+                        numtk::vec3u const child{ x, y, z };
+                        uint16_t child_index = current_node->ChildIndex(child);
+                        if (current_node->child_mask.Test(child))
+                            node_queue.push_back(current_node->children[child_index]);
+                    }
+
+            current_node->data_mask.Set(children_begin, children_end, _v);
+        }
+    }
+}
+
+BinaryRegion
+BinaryRegion::Shift(numtk::vec3i const& _offset) const
+{
+    if (-_offset.x > size.x
+        || -_offset.y > size.y
+        || -_offset.z > size.z)
+        return BinaryRegion{ numtk::vec3u::Constant(0) };
+
+    BinaryRegion output{ (size.cast<int32_t>() + _offset).cast<uint32_t>() };
+
+    numtk::vec3i const bit_offset = _offset % VoxelMask::kSize;
+    numtk::vec3i const cell_offset = _offset / VoxelMask::kSize;
+
+    numtk::vec3u const cell_extent = BinaryRegion::CellLocation(size + numtk::vec3u::Constant(VoxelMask::kSize-1));
+    numtk::vec3u const output_max_cell = BinaryRegion::CellLocation(output.size + numtk::vec3u::Constant(VoxelMask::kSize-1));
+
+    for (uint32_t cell_z = 0u; cell_z < cell_extent.z; ++cell_z)
+        for (uint32_t cell_y = 0u; cell_y < cell_extent.y; ++cell_y)
+            for (uint32_t cell_x = 0u; cell_x < cell_extent.x; ++cell_x)
+            {
+                numtk::vec3u const cell_index{ cell_x, cell_y, cell_z };
+                numtk::vec3u const dst_cell_base = cell_index + cell_offset.cast<uint32_t>();
+                VoxelMask src_mask = GetCellMask(cell_index).Shift(bit_offset);
+                for (uint32_t mask_index = 0; mask_index < 8; ++mask_index)
+                {
+                    numtk::vec3u const mask_offset{ mask_index & 1, (mask_index >> 1) & 1, mask_index >> 2 };
+                    numtk::vec3u const dst_cell = dst_cell_base + mask_offset;
+                    if (dst_cell.x >= output_max_cell.x
+                        || dst_cell.y >= output_max_cell.y
+                        || dst_cell.z >= output_max_cell.z)
+                        continue;
+
+                    VoxelMask dst_mask = output.GetCellMask(dst_cell);
+                    dst_mask = dst_mask.BitwiseOr(src_mask.SelectOctant(bit_offset.cast<uint32_t>(), (~mask_index) & 0x7));
+                    output.SetCellMask(dst_cell, dst_mask);
+                }
+            }
+
+    return output;
+}
+
+BinaryRegion
+BinaryRegion::Crop(numtk::bounds3u const& _bounds) const
+{
+    return {};
+}
+
+BinaryRegion
+BinaryRegion::BitwiseAnd(numtk::vec3i const& _begin, BinaryRegion const& _o) const
+{
+    return {};
+}
+
+BinaryRegion
+BinaryRegion::BitwiseOr(numtk::vec3i const& _begin, BinaryRegion const& _o) const
+{
+    return {};
+}
+
 BinaryRegion::Node*
 BinaryRegion::MakeCell(numtk::vec3u const& _cell_location)
 {
@@ -716,6 +870,29 @@ BinaryRegion::MakeCell(numtk::vec3u const& _cell_location)
     while (current_node->depth)
         current_node = InsertChild(current_node, current_node->LocalPoint(cell_begin));
     return current_node;
+}
+
+VoxelMask
+BinaryRegion::GetCellMask(numtk::vec3u const& _cell_location) const
+{
+    numtk::vec3u cell_begin = BinaryRegion::CellBegin(_cell_location);
+    Node const* node = FindDeepestNode(cell_begin);
+    if (!node)
+        return VoxelMask::kEmptyMask();
+
+    if (!node->depth)
+        return node->data_mask;
+    else
+        return node->child_mask.Test(node->LocalPoint(cell_begin))
+            ? VoxelMask::kFullMask()
+            : VoxelMask::kEmptyMask();
+}
+
+void
+BinaryRegion::SetCellMask(numtk::vec3u const& _cell_location, VoxelMask const& _mask)
+{
+    Node* node = MakeCell(_cell_location);
+    node->data_mask = _mask;
 }
 
 BinaryRegion::Node*
