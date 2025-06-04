@@ -38,6 +38,8 @@ struct vec2 : public std::array<scalar, 2>
     vec2 operator%(vec2 const& o) const { return { x()%o.x(), y()%o.y() }; }
     vec2 operator%(scalar s) const { return { x()%s, y()%s }; }
 
+    vec2 operator-() const { return { -x, -y }; }
+
     vec2 operator>>(vec2 const& o) const { return { x()>>o.x(), y()>>o.y() }; }
     vec2 operator>>(scalar s) const{ return { x()>>s, y()>>s }; }
     vec2 operator&(vec2 const& o) const { return { x()&o.x(), y()&o.y() }; }
@@ -78,6 +80,8 @@ struct vec3
     vec3 operator/(scalar s) const { return { x/s, y/s, z/s }; }
     vec3 operator%(vec3 const& o) const { return { x%o.x, y%o.y, z%o.z }; }
     vec3 operator%(scalar s) const { return { x%s, y%s, z%s }; }
+
+    vec3 operator-() const { return { -x, -y, -z }; }
 
     vec3 operator>>(vec3 const& o) const { return { x>>o.x, y>>o.y, z>>o.z }; }
     vec3 operator>>(scalar s) const{ return { x>>s, y>>s, z>>s }; }
@@ -133,6 +137,8 @@ struct vec4 : public std::array<scalar, 4>
     vec4 operator/(scalar s) const { return { x()/s, y()/s, z()/s, w()/s }; }
     vec4 operator%(vec4 const& o) const { return { x()%o.x(), y()%o.y(), z()%o.z(), w()%o.w() }; }
     vec4 operator%(scalar s) const { return { x()%s, y()%s, z()%s, w()%s }; }
+
+    vec4 operator-() const { return { -x, -y, -z, -w }; }
 
     vec4 operator>>(vec4 const& o) const { return { x()>>o.x(), y()>>o.y(), z()>>o.z(), w()>>o.w() }; }
     vec4 operator>>(scalar s) const{ return { x()>>s, y()>>s, z()>>s, w()>>s }; }
