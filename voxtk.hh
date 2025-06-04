@@ -34,7 +34,7 @@ struct VoxelMask
 
     VoxelMask SelectOctant(numtk::vec3u const& junction, uint32_t index) const;
 
-    VoxelMask Shift(numtk::vec3i const& shift);
+    VoxelMask Shift(numtk::vec3i shift);
 
     bool Test(numtk::vec3u const& point) const;
     uint64_t ExtractKernel(numtk::vec3u const& base) const;
@@ -1215,12 +1215,14 @@ VoxelMask VoxelMask::SelectOctant(numtk::vec3u const& junction, uint32_t index) 
     return BitwiseAnd(x_mask.BitwiseAnd(y_mask).BitwiseAnd(z_mask));
 }
 
-VoxelMask VoxelMask::Shift(numtk::vec3i const& shift)
+VoxelMask VoxelMask::Shift(numtk::vec3i shift)
 {
     VoxelMask output = *this;
 
     static constexpr uint64_t kBroadcastU4 = 0x1111'1111'1111'1111ull;
     static constexpr uint64_t kBroadcastU16 = 0x0001'0001'0001'0001ull;
+
+    shift &= (int32_t)VoxelMask::kSizeMask;
 
     if (shift.x != 0)
     {
