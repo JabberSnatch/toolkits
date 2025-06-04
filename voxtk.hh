@@ -182,6 +182,8 @@ struct BinaryRegion
     VoxelMask GetCellMask(numtk::vec3u const& _cell_location) const;
     void SetCellMask(numtk::vec3u const& _cell_location, VoxelMask const& _mask);
 
+    uint64_t GetEnclosingKernel(numtk::vec3u const& _point) const;
+
     Node* FindDeepestNode(numtk::vec3u const& _point) const;
     Node* InsertChild(Node* _parent, numtk::vec3u const& _local_point);
 
@@ -750,7 +752,7 @@ BinaryRegion::Set(numtk::vec3u const& _point, bool _v)
     Node* node = FindDeepestNode(_point);
     if (!node
         || (node->depth && (node->data_mask.Test(node->LocalPoint(_point))) != _v))
-        node = MakeCell(_point);
+        node = MakeCell(BinaryRegion::CellLocation(_point));
 
     if (!node->depth)
         node->data_mask.Set(node->LocalPoint(_point), _v);
@@ -806,9 +808,9 @@ BinaryRegion::Set(numtk::bounds3u const& _bounds, bool _v)
 BinaryRegion
 BinaryRegion::Shift(numtk::vec3i const& _offset) const
 {
-    if (-_offset.x > size.x
-        || -_offset.y > size.y
-        || -_offset.z > size.z)
+    if (-_offset.x > (int32_t)size.x
+        || -_offset.y > (int32_t)size.y
+        || -_offset.z > (int32_t)size.z)
         return {};
 
     BinaryRegion output{ (size.cast<int32_t>() + _offset).cast<uint32_t>() };
@@ -940,6 +942,19 @@ BinaryRegion::SetCellMask(numtk::vec3u const& _cell_location, VoxelMask const& _
 {
     Node* node = MakeCell(_cell_location);
     node->data_mask = _mask;
+}
+
+uint64_t
+BinaryRegion::GetEnclosingKernel(numtk::vec3u const& _point) const
+{
+    Node const* node = FindDeepestNode(_point);
+    numtk::vec3u local_point = node->LocalPoint(_point);
+    if (!node->depth)
+        return node->data_mask.ExtractKernel(local_point);
+    else
+        return node->child_mask.Test(local_point)
+            ? ~(uint64_t)0
+            : 0;
 }
 
 BinaryRegion::Node*
