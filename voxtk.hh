@@ -809,7 +809,7 @@ BinaryRegion::Shift(numtk::vec3i const& _offset) const
     if (-_offset.x > size.x
         || -_offset.y > size.y
         || -_offset.z > size.z)
-        return BinaryRegion{ numtk::vec3u::Constant(0) };
+        return {};
 
     BinaryRegion output{ (size.cast<int32_t>() + _offset).cast<uint32_t>() };
 
@@ -847,19 +847,66 @@ BinaryRegion::Shift(numtk::vec3i const& _offset) const
 BinaryRegion
 BinaryRegion::Crop(numtk::bounds3u const& _bounds) const
 {
-    return {};
+    if (!Contains(_bounds.min))
+        return {};
+
+    BinaryRegion shifted = Shift(-(_bounds.min.cast<int32_t>()));
+
+    BinaryRegion output{ _bounds.extent };
+    numtk::vec3u const cell_extent = BinaryRegion::CellLocation(output.size + numtk::vec3u::Constant(VoxelMask::kSize-1));
+    for (uint32_t cell_z = 0u; cell_z < cell_extent.z; ++cell_z)
+        for (uint32_t cell_y = 0u; cell_y < cell_extent.y; ++cell_y)
+            for (uint32_t cell_x = 0u; cell_x < cell_extent.x; ++cell_x)
+            {
+                numtk::vec3u const cell_index{ cell_x, cell_y, cell_z };
+                output.SetCellMask(cell_index, shifted.GetCellMask(cell_index));
+            }
+
+    return output;
 }
 
 BinaryRegion
 BinaryRegion::BitwiseAnd(numtk::vec3i const& _begin, BinaryRegion const& _o) const
 {
-    return {};
+    BinaryRegion output{ size };
+    BinaryRegion rhs = _o.Shift(_begin);
+
+    numtk::vec3u const cell_extent = numtk::min(
+        BinaryRegion::CellLocation(size + numtk::vec3u::Constant(VoxelMask::kSize-1)),
+        BinaryRegion::CellLocation(rhs.size + numtk::vec3u::Constant(VoxelMask::kSize-1)));
+
+    for (uint32_t cell_z = 0u; cell_z < cell_extent.z; ++cell_z)
+        for (uint32_t cell_y = 0u; cell_y < cell_extent.y; ++cell_y)
+            for (uint32_t cell_x = 0u; cell_x < cell_extent.x; ++cell_x)
+            {
+                numtk::vec3u const cell_index{ cell_x, cell_y, cell_z };
+                VoxelMask output_mask = GetCellMask(cell_index).BitwiseAnd(rhs.GetCellMask(cell_index));
+                output.SetCellMask(cell_index, output_mask);
+            }
+
+    return output;
 }
 
 BinaryRegion
 BinaryRegion::BitwiseOr(numtk::vec3i const& _begin, BinaryRegion const& _o) const
 {
-    return {};
+    BinaryRegion output{ size };
+    BinaryRegion rhs = _o.Shift(_begin);
+
+    numtk::vec3u const cell_extent = numtk::min(
+        BinaryRegion::CellLocation(size + numtk::vec3u::Constant(VoxelMask::kSize-1)),
+        BinaryRegion::CellLocation(rhs.size + numtk::vec3u::Constant(VoxelMask::kSize-1)));
+
+    for (uint32_t cell_z = 0u; cell_z < cell_extent.z; ++cell_z)
+        for (uint32_t cell_y = 0u; cell_y < cell_extent.y; ++cell_y)
+            for (uint32_t cell_x = 0u; cell_x < cell_extent.x; ++cell_x)
+            {
+                numtk::vec3u const cell_index{ cell_x, cell_y, cell_z };
+                VoxelMask output_mask = GetCellMask(cell_index).BitwiseOr(rhs.GetCellMask(cell_index));
+                output.SetCellMask(cell_index, output_mask);
+            }
+
+    return output;
 }
 
 BinaryRegion::Node*
