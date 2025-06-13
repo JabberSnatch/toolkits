@@ -734,6 +734,54 @@ BinaryRegion::BinaryRegion(numtk::vec3u _size)
     root->depth = level_count - 1;
 }
 
+BinaryRegion::BinaryRegion(BinaryRegion const& _other)
+    : BinaryRegion{ _other.size }
+{
+    *root = *_other.root;
+    std::vector<Node*> node_queue = { root };
+
+    while (!node_queue.empty())
+    {
+        Node* current_node = node_queue.back();
+        node_queue.pop_back();
+
+        uint16_t child_index = current_node->child_mask.NextIndex();
+        while (child_index < 512)
+        {
+            Node* new_node = node_pool[node_pool.Reserve()];
+            *new_node = *(current_node->children[child_index]);
+            current_node->children[child_index] = new_node;
+            node_queue.push_back(new_node);
+            child_index = current_node->child_mask.NextIndex(child_index);
+        }
+    }
+}
+
+BinaryRegion& BinaryRegion::operator=(BinaryRegion const& _other)
+{
+    *this = BinaryRegion{ _other.size };
+    *root = *_other.root;
+    std::vector<Node*> node_queue = { root };
+
+    while (!node_queue.empty())
+    {
+        Node* current_node = node_queue.back();
+        node_queue.pop_back();
+
+        uint16_t child_index = current_node->child_mask.NextIndex();
+        while (child_index < 512)
+        {
+            Node* new_node = node_pool[node_pool.Reserve()];
+            *new_node = *(current_node->children[child_index]);
+            current_node->children[child_index] = new_node;
+            node_queue.push_back(new_node);
+            child_index = current_node->child_mask.NextIndex(child_index);
+        }
+    }
+
+    return *this;
+}
+
 bool
 BinaryRegion::Test(numtk::vec3u const& _point) const
 {
