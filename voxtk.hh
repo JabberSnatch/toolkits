@@ -815,8 +815,8 @@ BinaryRegion::Shift(numtk::vec3i const& _offset) const
 
     BinaryRegion output{ (size.cast<int32_t>() + _offset).cast<uint32_t>() };
 
-    numtk::vec3i const bit_offset = _offset % VoxelMask::kSize;
-    numtk::vec3i const cell_offset = _offset / VoxelMask::kSize;
+    numtk::vec3i const bit_offset = _offset & VoxelMask::kSizeMask;
+    numtk::vec3i const cell_offset = _offset >> VoxelMask::kLogSize;
 
     numtk::vec3u const cell_extent = BinaryRegion::CellLocation(size + numtk::vec3u::Constant(VoxelMask::kSize-1));
     numtk::vec3u const output_max_cell = BinaryRegion::CellLocation(output.size + numtk::vec3u::Constant(VoxelMask::kSize-1));
@@ -834,7 +834,10 @@ BinaryRegion::Shift(numtk::vec3i const& _offset) const
                     numtk::vec3u const dst_cell = dst_cell_base + mask_offset;
                     if (dst_cell.x >= output_max_cell.x
                         || dst_cell.y >= output_max_cell.y
-                        || dst_cell.z >= output_max_cell.z)
+                        || dst_cell.z >= output_max_cell.z
+                        || dst_cell.x < 0
+                        || dst_cell.y < 0
+                        || dst_cell.z < 0)
                         continue;
 
                     VoxelMask dst_mask = output.GetCellMask(dst_cell);
@@ -948,6 +951,8 @@ uint64_t
 BinaryRegion::GetEnclosingKernel(numtk::vec3u const& _point) const
 {
     Node const* node = FindDeepestNode(_point);
+    if (!node) return 0;
+
     numtk::vec3u local_point = node->LocalPoint(_point);
     if (!node->depth)
         return node->data_mask.ExtractKernel(local_point);
