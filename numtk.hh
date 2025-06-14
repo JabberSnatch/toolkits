@@ -76,7 +76,7 @@ struct vec3
     vec3& operator-=(vec3 const& o) { x-=o.x; y-=o.y; z-=o.z; return *this; }
     vec3 operator*(vec3 const& o) const { return { x*o.x, y*o.y, z*o.z }; }
     vec3 operator*(scalar s) const { return { x*s, y*s, z*s }; }
-    vec3& operator*=(scalar s) { x*=s; y*=s; z*=z; return *this; }
+    vec3& operator*=(scalar s) { x*=s; y*=s; z*=s; return *this; }
     vec3 operator/(vec3 const& o) const { return { x/o.x, y/o.y, z/o.z }; }
     vec3 operator/(scalar s) const { return { x/s, y/s, z/s }; }
     vec3 operator%(vec3 const& o) const { return { x%o.x, y%o.y, z%o.z }; }
