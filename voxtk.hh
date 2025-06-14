@@ -798,8 +798,10 @@ void
 BinaryRegion::Set(numtk::vec3u const& _point, bool _v)
 {
     Node* node = FindDeepestNode(_point);
-    if (!node
-        || (node->depth && (node->data_mask.Test(node->LocalPoint(_point))) != _v))
+    if (!node)
+        return;
+
+    if ((node->depth && (node->data_mask.Test(node->LocalPoint(_point))) != _v))
         node = MakeCell(BinaryRegion::CellLocation(_point));
 
     if (!node->depth)
