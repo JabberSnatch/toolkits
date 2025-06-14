@@ -844,11 +844,12 @@ BinaryRegion::Set(numtk::bounds3u const& _bounds, bool _v)
                     {
                         numtk::vec3u const child{ x, y, z };
                         uint16_t child_index = current_node->ChildIndex(child);
-                        if (current_node->child_mask.Test(child))
-                            node_queue.push_back(current_node->children[child_index]);
-                    }
 
-            current_node->data_mask.Set(children_begin, children_end, _v);
+                        if (!current_node->child_mask.Test(child))
+                            InsertChild(current_node, child);
+
+                        node_queue.push_back(current_node->children[child_index]);
+                    }
         }
     }
 }
