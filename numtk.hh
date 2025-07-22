@@ -352,6 +352,7 @@ struct bounds2
     using PointType = vec2<scalar>;
     PointType min;
     PointType extent;
+    PointType max() const { return min+extent; }
     bool Contains(PointType const& point) {
         PointType max = min+extent;
         return point.x() >= min.x() && point.x() < max.x()
@@ -365,6 +366,7 @@ struct bounds3
     using PointType = vec3<scalar>;
     PointType min;
     PointType extent;
+    PointType max() const { return min+extent; }
 
     bool Contains(PointType const& point) {
         PointType max = min+extent;
