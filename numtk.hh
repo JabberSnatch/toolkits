@@ -353,7 +353,7 @@ struct bounds2
     PointType min;
     PointType extent;
     PointType max() const { return min+extent; }
-    bool Contains(PointType const& point) {
+    bool Contains(PointType const& point) const {
         PointType max = min+extent;
         return point.x() >= min.x() && point.x() < max.x()
             && point.y() >= min.y() && point.y() < max.y();
@@ -368,7 +368,7 @@ struct bounds3
     PointType extent;
     PointType max() const { return min+extent; }
 
-    bool Contains(PointType const& point) {
+    bool Contains(PointType const& point) const {
         PointType max = min+extent;
         return point.x >= min.x && point.x < max.x
             && point.y >= min.y && point.y < max.y
