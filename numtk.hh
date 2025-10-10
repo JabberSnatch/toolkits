@@ -358,6 +358,14 @@ struct bounds2
         return point.x() >= min.x() && point.x() < max.x()
             && point.y() >= min.y() && point.y() < max.y();
     }
+
+    bounds2 Expand(PointType const& point) const {
+        bounds2 output = {};
+        output.min = numtk::min(min, point);
+        PointType max = numtk::max((min+extent), point);
+        output.extent = max - output.min;
+        return output;
+    }
 };
 
 template <typename scalar>
