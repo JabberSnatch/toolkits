@@ -52,7 +52,7 @@ struct FreeList
         }
 
         if (!location_found)
-            indices.insert(range_iterator, { handle, handle+1 });
+            range_iterator = std::next(indices.insert(range_iterator, { handle, handle+1 }));
 
         if (has_prev && has_value && std::prev(range_iterator)->end == range_iterator->begin)
         {
