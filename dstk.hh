@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <memory>
 #include <stdexcept>
+#include <unordered_map>
 #include <vector>
 
 namespace dstk
@@ -246,6 +247,91 @@ struct OrderedVector
 
     std::vector<Value> items{};
     std::vector<Key> keys{};
+};
+
+struct Registry
+{
+    using Node = FreeList::Index;
+    using ComponentID = uint64_t;
+    using ComponentTag = uint64_t;
+
+    struct ComponentBinding {
+        ComponentID type;
+        ComponentTag tag;
+    };
+
+    struct ComponentStorage {
+        FreeList indices;
+        BlockVector data;
+        BlockVector bindings;
+    };
+
+    std::unordered_map<ComponentID, ComponentStorage> components;
+    std::unordered_map<Node, std::vector<ComponentBinding>> nodes;
+    FreeList handle_pool;
+
+    Node MakeNode() {
+        Node node = handle_pool.Reserve();
+        nodes[node] = {};
+        return node;
+    }
+
+    static ComponentID DeclareComponent() {
+        static ComponentID next_component = 0;
+        return next_component++;
+    }
+
+    template <typename T>
+    static ComponentID ComponentImpl() {
+        static ComponentID const tag = DeclareComponent();
+        return tag;
+    }
+
+    template <typename T>
+    static ComponentID Component() {
+        return ComponentImpl<typename std::remove_cvref<T>::type>();
+    }
+
+    template <typename ArgType> void BindComponent(Node node, ArgType&& component)
+    {
+        using CType = typename std::remove_cvref<ArgType>::type;
+        ComponentID const component_id = Component<CType>();
+
+        if (components.count(component_id) == 0)
+            components.emplace(component_id, ComponentStorage{
+                {}, BlockVector{ sizeof(CType), 256 }, BlockVector{ sizeof(uint64_t), 2048 }
+            });
+
+        ComponentStorage& storage = components.at(component_id);
+        ComponentTag component_tag = storage.indices.Reserve();
+        storage.data.Expand(storage.indices.RequiredSize());
+        storage.bindings.Expand(storage.indices.RequiredSize());
+
+        new (storage.data[component_tag]) CType(std::forward<ArgType>(component));
+        *(uint64_t*)storage.bindings[component_tag] = node;
+
+        nodes[node].push_back({ component_id, component_tag });
+    }
+
+    template <typename CType> CType* ComponentLookup(Node n) {
+        return (CType*)((Registry const*)this)->ComponentLookup<CType>(n);
+    }
+
+    template <typename CType> CType const* ComponentLookup(Node n) const {
+        ComponentID const component_id = Component<CType>();
+
+        std::vector<ComponentBinding> const& bindings = nodes.at(n);
+        auto binding_it = std::find_if(
+            bindings.begin(), bindings.end(),
+            [](ComponentBinding const& binding){
+                return binding.type == Component<CType>();
+            });
+        if (binding_it == bindings.end())
+            return nullptr;
+
+        ComponentStorage const& storage = components.at(component_id);
+        return (CType const*)storage.data[binding_it->tag];
+    }
 };
 
 }
