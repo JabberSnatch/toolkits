@@ -249,6 +249,53 @@ struct OrderedVector
     std::vector<Key> keys{};
 };
 
+template <typename LeftKey, typename RightKey>
+struct BijectiveMap
+{
+    BijectiveMap() = default;
+    BijectiveMap(BijectiveMap const&) = default;
+    BijectiveMap(BijectiveMap&&) = default;
+    BijectiveMap& operator=(BijectiveMap const&) = default;
+    BijectiveMap& operator=(BijectiveMap&&) = default;
+
+    std::vector<RightKey>::iterator insert(LeftKey const& lk, RightKey const& rk) {
+        left.insert(lk, rk);
+        return right.insert(rk, lk);
+    }
+
+    std::vector<LeftKey>::iterator insert(RightKey const& rk, LeftKey const& lk) {
+        right.insert(rk, lk);
+        return left.insert(lk, rk);
+    }
+
+    void erase(LeftKey const& lk) {
+        if (!left.contains(lk))
+            return;
+        RightKey const& rk = left[lk];
+        left.erase(lk);
+        right.erase(rk);
+    }
+
+    void erase(RightKey const& rk) {
+        if (!right.contains(rk))
+            return;
+        LeftKey const& lk = right[rk];
+        right.erase(rk);
+        left.erase(lk);
+    }
+
+    bool contains(LeftKey const& lk) const {
+        return left.contains(lk);
+    }
+
+    bool contains(RightKey const& rk) const {
+        return right.contains(rk);
+    }
+
+    OrderedVector<LeftKey, RightKey> left;
+    OrderedVector<RightKey, LeftKey> right;
+};
+
 struct Registry
 {
     using Node = FreeList::Index;
