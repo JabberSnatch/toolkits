@@ -258,14 +258,14 @@ struct BijectiveMap
     BijectiveMap& operator=(BijectiveMap const&) = default;
     BijectiveMap& operator=(BijectiveMap&&) = default;
 
-    std::vector<RightKey>::iterator insert(LeftKey const& lk, RightKey const& rk) {
-        left.insert(lk, rk);
-        return right.insert(rk, lk);
+    auto emplace(LeftKey const& lk, RightKey const& rk) {
+        left.emplace(lk, rk);
+        return right.emplace(rk, lk);
     }
 
-    std::vector<LeftKey>::iterator insert(RightKey const& rk, LeftKey const& lk) {
-        right.insert(rk, lk);
-        return left.insert(lk, rk);
+    auto emplace(RightKey const& rk, LeftKey const& lk) {
+        right.emplace(rk, lk);
+        return left.emplace(lk, rk);
     }
 
     void erase(LeftKey const& lk) {
@@ -292,8 +292,8 @@ struct BijectiveMap
         return right.contains(rk);
     }
 
-    OrderedVector<LeftKey, RightKey> left;
-    OrderedVector<RightKey, LeftKey> right;
+    std::unordered_map<LeftKey, RightKey> left;
+    std::unordered_map<RightKey, LeftKey> right;
 };
 
 struct Registry
