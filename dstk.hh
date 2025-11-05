@@ -189,13 +189,13 @@ struct ObjectPool
 };
 
 template <typename Key, typename Value>
-struct OrderedVector
+struct FlatMap
 {
-    OrderedVector() = default;
-    OrderedVector(OrderedVector const&) = default;
-    OrderedVector(OrderedVector&&) = default;
-    OrderedVector& operator=(OrderedVector const&) = default;
-    OrderedVector& operator=(OrderedVector&&) = default;
+    FlatMap() = default;
+    FlatMap(FlatMap const&) = default;
+    FlatMap(FlatMap&&) = default;
+    FlatMap& operator=(FlatMap const&) = default;
+    FlatMap& operator=(FlatMap&&) = default;
 
     std::vector<Value>::iterator insert(Key const& k, Value const& v)
     {
@@ -241,8 +241,39 @@ struct OrderedVector
     Value& operator[](Key const& k)
     {
         return const_cast<Value&>(
-            const_cast<OrderedVector<Key, Value> const*>(this)->operator[](k)
+            const_cast<FlatMap<Key, Value> const*>(this)->operator[](k)
         );
+    }
+
+    std::vector<Value> items{};
+    std::vector<Key> keys{};
+};
+
+template <typename Key, typename Value>
+struct FlatMultimap
+{
+    FlatMultimap() = default;
+    FlatMultimap(FlatMultimap const&) = default;
+    FlatMultimap(FlatMultimap&&) = default;
+    FlatMultimap& operator=(FlatMultimap const&) = default;
+    FlatMultimap& operator=(FlatMultimap&&) = default;
+
+    std::vector<Value>::iterator insert(Key const& k, Value const& v)
+    {
+        auto key_position = std::lower_bound(keys.begin(), keys.end(), k);
+        while (key_position != keys.end() && *key_position == k)
+            ++key_position;
+        auto item_position = std::next(items.begin(), std::distance(keys.begin(), key_position));
+        keys.insert(key_position, k);
+        return items.insert(item_position, v);
+    }
+
+    std::size_t key_index(Key const& k)
+    {
+        auto key_position = std::lower_bound(keys.begin(), keys.end(), k);
+        if (key_position != keys.end() && *key_position == k)
+            return std::distance(keys.begin(), key_position);
+        return ~(std::size_t)0;
     }
 
     std::vector<Value> items{};
