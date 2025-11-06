@@ -268,12 +268,24 @@ struct FlatMultimap
         return items.insert(item_position, v);
     }
 
-    std::size_t key_index(Key const& k)
+    std::size_t key_index(Key const& k) const
     {
         auto key_position = std::lower_bound(keys.begin(), keys.end(), k);
         if (key_position != keys.end() && *key_position == k)
             return std::distance(keys.begin(), key_position);
         return ~(std::size_t)0;
+    }
+
+    std::size_t count(Key const& k) const
+    {
+        std::size_t index = key_index(k);
+        if (index >= keys.size())
+            return 0;
+
+        std::size_t count = 0;
+        while (index+count++ != keys.size()-1
+               && keys[index+count] == k);
+        return count;
     }
 
     std::vector<Value> items{};
@@ -283,48 +295,124 @@ struct FlatMultimap
 template <typename LeftKey, typename RightKey>
 struct BijectiveMap
 {
+    template <typename T>
+    struct NoHash {
+        std::size_t operator()(T const&) { return 0; }
+    };
+
+    //using Hash = std::hash;
+    template <typename T>
+    using Hash = NoHash<T>;
+
     BijectiveMap() = default;
     BijectiveMap(BijectiveMap const&) = default;
     BijectiveMap(BijectiveMap&&) = default;
     BijectiveMap& operator=(BijectiveMap const&) = default;
     BijectiveMap& operator=(BijectiveMap&&) = default;
 
-    auto emplace(LeftKey const& lk, RightKey const& rk) {
-        left.emplace(lk, rk);
-        return right.emplace(rk, lk);
+    void emplace(LeftKey const& lk, RightKey const& rk) {
+        std::size_t lk_hash = Hash<LeftKey>{}(lk);
+        std::size_t rk_hash = Hash<RightKey>{}(rk);
+        left.insert(lk_hash, rk);
+        right.insert(rk_hash, lk);
     }
 
-    auto emplace(RightKey const& rk, LeftKey const& lk) {
-        right.emplace(rk, lk);
-        return left.emplace(lk, rk);
+    RightKey const& operator[](LeftKey const& lk) const {
+        std::size_t lk_hash = Hash<LeftKey>{}(lk);
+        std::size_t match_count = left.count(lk_hash);
+        if (!match_count)
+            throw std::out_of_range{"Invalid key"};
+
+        std::size_t left_index = left.key_index(lk_hash);
+        if (match_count == 1)
+            return left.items[left_index];
+
+        while (left.keys[left_index] == lk_hash)
+        {
+            RightKey const& rk = left.items[left_index];
+            std::size_t rk_hash = Hash<RightKey>{}(rk);
+            std::size_t right_index = right.key_index(rk_hash);
+            if (!std::memcmp(&right.items[right_index], &lk, sizeof(LeftKey)))
+                return rk;
+            ++left_index;
+        }
+
+        throw std::out_of_range{"Invalid key"};
     }
 
-    void erase(LeftKey const& lk) {
-        if (!left.contains(lk))
-            return;
-        RightKey const& rk = left[lk];
-        left.erase(lk);
-        right.erase(rk);
-    }
+    LeftKey const& operator[](RightKey const& rk) const {
+        std::size_t rk_hash = Hash<RightKey>{}(rk);
+        std::size_t match_count = right.count(rk_hash);
+        if (!match_count)
+            throw std::out_of_range{"Invalid key"};
 
-    void erase(RightKey const& rk) {
-        if (!right.contains(rk))
-            return;
-        LeftKey const& lk = right[rk];
-        right.erase(rk);
-        left.erase(lk);
+        std::size_t right_index = right.key_index(rk_hash);
+        if (match_count == 1)
+            return right.items[right_index];
+
+        while (right.keys[right_index] == rk_hash)
+        {
+            LeftKey const& lk = right.items[right_index];
+            std::size_t lk_hash = Hash<LeftKey>{}(lk);
+            std::size_t left_index = left.key_index(lk_hash);
+            if (!std::memcmp(&left.items[left_index], &rk, sizeof(RightKey)))
+                return lk;
+            ++right_index;
+        }
+
+        throw std::out_of_range{"Invalid key"};
     }
 
     bool contains(LeftKey const& lk) const {
-        return left.contains(lk);
+        std::size_t lk_hash = Hash<LeftKey>{}(lk);
+        std::size_t match_count = left.count(lk_hash);
+        if (!match_count)
+            return false;
+
+        std::size_t left_index = left.key_index(lk_hash);
+        if (match_count == 1)
+            return true;
+
+        while (left.keys[left_index] == lk_hash)
+        {
+            RightKey const& rk = left.items[left_index];
+            std::size_t rk_hash = Hash<RightKey>{}(rk);
+            std::size_t right_index = right.key_index(rk_hash);
+            if (!std::memcmp(&right.items[right_index], &lk, sizeof(LeftKey)))
+                return true;
+            ++left_index;
+        }
+
+        return false;
     }
 
     bool contains(RightKey const& rk) const {
-        return right.contains(rk);
+        std::size_t rk_hash = Hash<RightKey>{}(rk);
+        std::size_t match_count = right.count(rk_hash);
+        if (!match_count)
+            return false;
+
+        std::size_t right_index = right.key_index(rk_hash);
+        if (match_count == 1)
+            return true;
+
+        while (right.keys[right_index] == rk_hash)
+        {
+            LeftKey const& lk = right.items[right_index];
+            std::size_t lk_hash = Hash<LeftKey>{}(lk);
+            std::size_t left_index = left.key_index(lk_hash);
+            if (!std::memcmp(&left.items[left_index], &rk, sizeof(RightKey)))
+                return true;
+            ++right_index;
+        }
+
+        return false;
     }
 
-    std::unordered_map<LeftKey, RightKey> left;
-    std::unordered_map<RightKey, LeftKey> right;
+    std::size_t size() const { return left.items.size(); }
+
+    FlatMultimap<std::size_t, RightKey> left;
+    FlatMultimap<std::size_t, LeftKey> right;
 };
 
 struct Registry
