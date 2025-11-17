@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <iterator>
 #include <cstdint>
 #include <memory>
 #include <stdexcept>
@@ -411,7 +412,8 @@ struct Registry
 
     struct ComponentBinding {
         ComponentID type;
-        ComponentTag tag;
+        ComponentTag index;
+        uint32_t order_key;
     };
 
     struct ComponentStorage {
@@ -428,6 +430,17 @@ struct Registry
         Node node = handle_pool.Reserve();
         nodes[node] = {};
         return node;
+    }
+
+    static void InsertComponentBinding(std::vector<ComponentBinding>& components, ComponentBinding const& binding) {
+        auto bindings_it = std::lower_bound(
+            components.begin(), components.end(), binding,
+            [](ComponentBinding const& lhs, ComponentBinding const& rhs) {
+                return lhs.type < rhs.type ||
+                    (lhs.type == rhs.type && lhs.order_key < rhs.order_key);
+            });
+
+        components.insert(bindings_it, binding);
     }
 
     static ComponentID DeclareComponent() {
@@ -448,6 +461,11 @@ struct Registry
 
     template <typename ArgType> void BindComponent(Node node, ArgType&& component)
     {
+        BindComponent(node, 0, std::forward<ArgType>(component));
+    }
+
+    template <typename ArgType> void BindComponent(Node node, uint32_t key, ArgType&& component)
+    {
         using CType = typename std::remove_cvref<ArgType>::type;
         ComponentID const component_id = Component<CType>();
 
@@ -457,14 +475,14 @@ struct Registry
             });
 
         ComponentStorage& storage = components.at(component_id);
-        ComponentTag component_tag = storage.indices.Reserve();
+        ComponentTag component_index = storage.indices.Reserve();
         storage.data.Expand(storage.indices.RequiredSize());
         storage.bindings.Expand(storage.indices.RequiredSize());
 
-        new (storage.data[component_tag]) CType(std::forward<ArgType>(component));
-        *(uint64_t*)storage.bindings[component_tag] = node;
+        new (storage.data[component_index]) CType(std::forward<ArgType>(component));
+        *(uint64_t*)storage.bindings[component_index] = node;
 
-        nodes[node].push_back({ component_id, component_tag });
+        InsertComponentBinding(nodes[node], { component_id, component_index, key });
     }
 
     template <typename CType> CType* ComponentLookup(Node n) {
@@ -484,7 +502,28 @@ struct Registry
             return nullptr;
 
         ComponentStorage const& storage = components.at(component_id);
-        return (CType const*)storage.data[binding_it->tag];
+        return (CType const*)storage.data[binding_it->index];
+    }
+
+    template <typename CType> std::vector<CType const*> ComponentRangeLookup(Node n) const {
+        ComponentID const component_id = Component<CType>();
+
+        std::vector<ComponentBinding> const& bindings = nodes.at(n);
+        auto range_begin = std::lower_bound(
+            bindings.begin(), bindings.end(), component_id,
+            [](ComponentBinding const& lhs, ComponentID rhs) { return lhs.type < rhs; });
+        auto range_end = std::upper_bound(
+            bindings.begin(), bindings.end(), component_id,
+            [](ComponentID lhs, ComponentBinding const& rhs) { return lhs < rhs.type; });
+
+        std::vector<CType const*> result = {};
+        ComponentStorage const& storage = components.at(component_id);
+        std::transform(range_begin, range_end, std::back_inserter(result),
+                       [&storage](ComponentBinding const& binding) {
+                           return (CType const*)storage.data[binding.index];
+                       });
+
+        return result;
     }
 };
 
