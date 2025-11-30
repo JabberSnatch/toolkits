@@ -14,6 +14,7 @@ namespace dstk
 struct FreeList
 {
     using Index = uint64_t;
+    static constexpr Index kInvalidIndex = ~0ull;
     struct Range { Index begin, end; };
 
     FreeList() : indices{ Range{ 0, UINT64_MAX } } {}
