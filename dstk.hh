@@ -460,12 +460,12 @@ struct Registry
         return ComponentImpl<typename std::remove_cvref<T>::type>();
     }
 
-    template <typename ArgType> void BindComponent(Node node, ArgType&& component)
+    template <typename ArgType> auto BindComponent(Node node, ArgType&& component)
     {
-        BindComponent(node, 0, std::forward<ArgType>(component));
+        return BindComponent(node, 0, std::forward<ArgType>(component));
     }
 
-    template <typename ArgType> void BindComponent(Node node, uint32_t key, ArgType&& component)
+    template <typename ArgType> auto BindComponent(Node node, uint32_t key, ArgType&& component)
     {
         using CType = typename std::remove_cvref<ArgType>::type;
         ComponentID const component_id = Component<CType>();
@@ -484,6 +484,8 @@ struct Registry
         *(uint64_t*)storage.bindings[component_index] = node;
 
         InsertComponentBinding(nodes[node], { component_id, component_index, key });
+
+        return (CType*)storage.data[component_index];
     }
 
     template <typename CType> CType* ComponentLookup(Node n) {
