@@ -64,10 +64,33 @@ struct FreeList
         }
     }
 
-    uint64_t RequiredSize() const
-    {
+    uint64_t RequiredSize() const {
         return indices.back().begin;
     }
+
+    struct IndexIterator {
+        IndexIterator& operator++() {
+            if (next_range_index >= list->indices.size())
+                return *this;
+
+            ++index;
+            if (index >= list->indices[next_range_index].begin)
+                index = list->indices[next_range_index++].end;
+            return *this;
+        }
+
+        bool operator==(IndexIterator const& rhs) { return list == rhs.list && index == rhs.index; }
+        bool operator!=(IndexIterator const& rhs) { return list != rhs.list || index != rhs.index; }
+
+        Index operator*() const { return index; }
+
+        Index index;
+        std::size_t next_range_index;
+        FreeList const* list;
+    };
+
+    IndexIterator begin() { return IndexIterator{ 0, 0, this }; }
+    IndexIterator end() { return IndexIterator{ kInvalidIndex, indices.size(), this }; }
 
     std::vector<Range> indices;
 };
@@ -78,41 +101,6 @@ struct BlockVector
         : object_size{ _object_size }
         , block_size{ _block_size }
     {}
-
-#if 0
-    BlockVector(BlockVector const& o)
-        : object_size{ o.object_size }
-        , block_size{ o.block_size }
-        , blocks{}
-    {
-        blocks.reserve(o.blocks.size());
-        for (std::unique_ptr<uint8_t[]> const& block : o.blocks)
-        {
-            blocks.emplace_back(new uint8_t[object_size * block_size]);
-            uint8_t* dst = blocks.back().get();
-            uint8_t const* src = block.get();
-            std::copy(src, src+object_size*block_size, dst);
-        }
-    }
-
-    BlockVector const& operator=(BlockVector const& o)
-    {
-        object_size = o.object_size;
-        block_size = o.block_size;
-
-        blocks.clear();
-        blocks.reserve(o.blocks.size());
-        for (std::unique_ptr<uint8_t[]> const& block : o.blocks)
-        {
-            blocks.emplace_back(new uint8_t[object_size * block_size]);
-            uint8_t* dst = blocks.back().get();
-            uint8_t const* src = block.get();
-            std::copy(src, src+object_size*block_size, dst);
-        }
-
-        return *this;
-    }
-#endif
 
     void Expand(uint64_t object_count) {
         if (object_count <= Capacity())
@@ -421,7 +409,24 @@ struct Registry
         FreeList indices;
         BlockVector data;
         BlockVector bindings;
+        std::function<void(void*)> dtor;
     };
+
+    Registry() = default;
+    Registry(Registry const&) = delete;
+    Registry(Registry&&) = delete;
+    Registry const& operator=(Registry const&) = delete;
+    Registry const& operator=(Registry&&) = delete;
+    ~Registry() {
+        for (auto&& pair : components)
+        {
+            for (FreeList::Index index : pair.second.indices)
+            {
+                void* component = pair.second.data[index];
+                pair.second.dtor(component);
+            }
+        }
+    }
 
     std::unordered_map<ComponentID, ComponentStorage> components;
     std::unordered_map<Node, std::vector<ComponentBinding>> nodes;
@@ -460,6 +465,11 @@ struct Registry
         return ComponentImpl<typename std::remove_cvref<T>::type>();
     }
 
+    template <typename T>
+    static std::function<void(void*)> ComponentDtor() {
+        return [](void* ptr){ ((T*)ptr)->~T(); };
+    }
+
     template <typename ArgType> auto BindComponent(Node node, ArgType&& component)
     {
         return BindComponent(node, 0, std::forward<ArgType>(component));
@@ -472,7 +482,10 @@ struct Registry
 
         if (components.count(component_id) == 0)
             components.emplace(component_id, ComponentStorage{
-                {}, BlockVector{ sizeof(CType), 256 }, BlockVector{ sizeof(uint64_t), 2048 }
+                FreeList{},
+                BlockVector{ sizeof(CType), 256 },
+                BlockVector{ sizeof(uint64_t), 2048 },
+                ComponentDtor<CType>()
             });
 
         ComponentStorage& storage = components.at(component_id);
