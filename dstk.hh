@@ -521,6 +521,26 @@ struct Registry
         return (CType const*)storage.data[binding_it->index];
     }
 
+    template <typename CType> CType* ComponentLookup(Node n, uint32_t key) {
+        return (CType*)((Registry const*)this)->ComponentLookup<CType>(n, key);
+    }
+
+    template <typename CType> CType const* ComponentLookup(Node n, uint32_t key) const {
+        ComponentID const component_id = Component<CType>();
+
+        std::vector<ComponentBinding> const& bindings = nodes.at(n);
+        auto binding_it = std::find_if(
+            bindings.begin(), bindings.end(),
+            [key](ComponentBinding const& binding){
+                return binding.type == Component<CType>() && binding.order_key == key;
+            });
+        if (binding_it == bindings.end())
+            return nullptr;
+
+        ComponentStorage const& storage = components.at(component_id);
+        return (CType const*)storage.data[binding_it->index];
+    }
+
     template <typename CType> std::vector<CType const*> ComponentRangeLookup(Node n) const {
         ComponentID const component_id = Component<CType>();
 
@@ -540,6 +560,20 @@ struct Registry
                        });
 
         return result;
+    }
+
+    template <typename CType> CType& ComponentRequest(Node n) {
+        CType* component = ComponentLookup<CType>(n);
+        if (!component)
+            component = BindComponent(n, CType{});
+        return *component;
+    }
+
+    template <typename CType> CType& ComponentRequest(Node n, uint32_t key) {
+        CType* component = ComponentLookup<CType>(n, key);
+        if (!component)
+            component = BindComponent(n, key, CType{});
+        return *component;
     }
 };
 
