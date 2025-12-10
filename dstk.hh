@@ -575,6 +575,25 @@ struct Registry
             component = BindComponent(n, key, CType{});
         return *component;
     }
+
+    template <typename CType> void ComponentErase(Node n, CType const* component) {
+        ComponentID const component_id = Component<CType>();
+
+        std::vector<ComponentBinding>& bindings = nodes.at(n);
+        ComponentStorage& storage = components.at(component_id);
+        auto binding_it = std::find_if(
+            bindings.begin(), bindings.end(),
+            [&storage, component](ComponentBinding const& binding) {
+                return storage.data[binding.index] == component;
+            });
+
+        if (binding_it == bindings.end())
+            return;
+
+        storage.dtor(storage.data[binding_it->index]);
+        storage.indices.Release(binding_it->index);
+        bindings.erase(binding_it);
+    }
 };
 
 }
