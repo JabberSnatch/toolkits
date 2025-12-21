@@ -406,6 +406,7 @@ struct Registry
     };
 
     struct ComponentStorage {
+        std::string type_name;
         FreeList indices;
         BlockVector data;
         BlockVector bindings;
@@ -439,14 +440,30 @@ struct Registry
     }
 
     static void InsertComponentBinding(std::vector<ComponentBinding>& components, ComponentBinding const& binding) {
-        auto bindings_it = std::lower_bound(
+        auto binding_it = std::lower_bound(
             components.begin(), components.end(), binding,
             [](ComponentBinding const& lhs, ComponentBinding const& rhs) {
                 return lhs.type < rhs.type ||
                     (lhs.type == rhs.type && lhs.order_key < rhs.order_key);
             });
 
-        components.insert(bindings_it, binding);
+        components.insert(binding_it, binding);
+    }
+
+    static ComponentBinding const* LookupComponentBinding(std::vector<ComponentBinding> const& components,
+                                                          ComponentID type,
+                                                          uint32_t order_key) {
+        auto binding_it = std::lower_bound(
+            components.begin(), components.end(), std::make_pair(type, order_key),
+            [](ComponentBinding const& lhs, auto const& rhs) {
+                return lhs.type < rhs.first ||
+                    (lhs.type == rhs.first && lhs.order_key < rhs.second);
+            });
+        if (binding_it != components.end()
+            && binding_it->type == type
+            && binding_it->order_key == order_key)
+            return &*binding_it;
+        return nullptr;
     }
 
     static ComponentID DeclareComponent() {
@@ -482,10 +499,11 @@ struct Registry
 
         if (components.count(component_id) == 0)
             components.emplace(component_id, ComponentStorage{
+                typeid(std::declval<CType>()).name(),
                 FreeList{},
                 BlockVector{ sizeof(CType), 256 },
                 BlockVector{ sizeof(uint64_t), 2048 },
-                ComponentDtor<CType>()
+                ComponentDtor<CType>(),
             });
 
         ComponentStorage& storage = components.at(component_id);
@@ -509,16 +527,13 @@ struct Registry
         ComponentID const component_id = Component<CType>();
 
         std::vector<ComponentBinding> const& bindings = nodes.at(n);
-        auto binding_it = std::find_if(
-            bindings.begin(), bindings.end(),
-            [](ComponentBinding const& binding){
-                return binding.type == Component<CType>();
-            });
-        if (binding_it == bindings.end())
+
+        ComponentBinding const* binding = LookupComponentBinding(bindings, component_id, 0);
+        if (!binding)
             return nullptr;
 
         ComponentStorage const& storage = components.at(component_id);
-        return (CType const*)storage.data[binding_it->index];
+        return (CType const*)storage.data[binding->index];
     }
 
     template <typename CType> CType* ComponentLookup(Node n, uint32_t key) {
@@ -529,16 +544,13 @@ struct Registry
         ComponentID const component_id = Component<CType>();
 
         std::vector<ComponentBinding> const& bindings = nodes.at(n);
-        auto binding_it = std::find_if(
-            bindings.begin(), bindings.end(),
-            [key](ComponentBinding const& binding){
-                return binding.type == Component<CType>() && binding.order_key == key;
-            });
-        if (binding_it == bindings.end())
+
+        ComponentBinding const* binding = LookupComponentBinding(bindings, component_id, key);
+        if (!binding)
             return nullptr;
 
         ComponentStorage const& storage = components.at(component_id);
-        return (CType const*)storage.data[binding_it->index];
+        return (CType const*)storage.data[binding->index];
     }
 
     template <typename CType> std::vector<CType const*> ComponentRangeLookup(Node n) const {
@@ -576,6 +588,32 @@ struct Registry
         return *component;
     }
 
+    template <typename CType> void ComponentRangeErase(Node n, uint32_t key_begin = 0, uint32_t key_end = UINT32_MAX) {
+        ComponentID const component_id = Component<CType>();
+        std::vector<ComponentBinding>& bindings = nodes.at(n);
+
+        auto range_begin = std::lower_bound(
+            bindings.begin(), bindings.end(), std::make_pair(component_id, key_begin),
+            [](ComponentBinding const& lhs, auto rhs) {
+                return lhs.type < rhs.first ||
+                    (lhs.type == rhs.first && lhs.order_key < rhs.second);
+            });
+        auto range_end = std::upper_bound(
+            bindings.begin(), bindings.end(), std::make_pair(component_id, key_end),
+            [](auto lhs, ComponentBinding const& rhs) {
+                return lhs.first < rhs.type ||
+                    (lhs.first == rhs.type && lhs.second < rhs.order_key);
+            });
+
+        ComponentStorage& storage = components.at(component_id);
+        for (auto component = range_begin; component != range_end; ++component)
+        {
+            storage.dtor(storage.data[component->index]);
+            storage.indices.Release(component->index);
+        }
+        bindings.erase(range_begin, range_end);
+    }
+
     template <typename CType> void ComponentErase(Node n, CType const* component) {
         ComponentID const component_id = Component<CType>();
 
@@ -583,8 +621,8 @@ struct Registry
         ComponentStorage& storage = components.at(component_id);
         auto binding_it = std::find_if(
             bindings.begin(), bindings.end(),
-            [&storage, component](ComponentBinding const& binding) {
-                return storage.data[binding.index] == component;
+            [&storage, component, component_id](ComponentBinding const& binding) {
+                return component_id == binding.type && storage.data[binding.index] == component;
             });
 
         if (binding_it == bindings.end())
