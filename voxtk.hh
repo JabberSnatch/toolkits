@@ -191,6 +191,22 @@ struct BinaryRegion
     dstk::ObjectPool<Node> node_pool{};
     numtk::vec3u size;
     uint32_t level_count;
+
+    template <typename T>
+    void DeclareLayer(uint32_t _id, T&& _default_value) {
+        using DataType = std::remove_cvref<T>::type;
+        static auto const PayloadDtor = [](void* ptr) { ((DataType*)ptr)->~DataType(); };
+        if (layers.count(_id))
+            return;
+
+        layers.emplace(_id, DataLayer{ sizeof(DataType), PayloadDtor });
+    }
+
+    struct DataLayer {
+        size_t payload_size;
+        std::function<void(void*)> dtor;
+    };
+    std::unordered_map<uint32_t, DataLayer> layers{};
 };
 
 } // namespace voxtk
