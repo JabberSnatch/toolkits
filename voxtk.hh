@@ -155,6 +155,8 @@ struct BinaryRegion
     void Clear(numtk::bounds3u const& _bounds) { Set(_bounds, false); }
 
     struct Node {
+        static constexpr int32_t kChildCount = VoxelMask::kVolume;
+
         Node* parent;
         numtk::vec3u location;
         uint32_t depth;
@@ -193,20 +195,88 @@ struct BinaryRegion
     uint32_t level_count;
 
     template <typename T>
-    void DeclareLayer(uint32_t _id, T&& _default_value) {
+    void DeclareLayer(uint8_t _id, T&& _default_value) {
         using DataType = std::remove_cvref<T>::type;
-        static auto const PayloadDtor = [](void* ptr) { ((DataType*)ptr)->~DataType(); };
+
+        static auto const PayloadDtor = [](void* ptr) {
+            ((DataType*)ptr)->~DataType();
+        };
+        static auto const PayloadCopy = [](void* dst, void const* src) {
+            *(DataType*)dst = *(DataType const*)src;
+        };
+
         if (layers.count(_id))
             return;
 
-        layers.emplace(_id, DataLayer{ sizeof(DataType), PayloadDtor });
+        auto layer_it = layers.emplace(_id, DataLayer{
+            sizeof(DataType), {}, PayloadDtor, PayloadCopy
+        });
+        layer_it.first->second.default_value.reset(new uint8_t[sizeof(DataType)]);
+        *(DataType*)layer_it.first->second.default_value.get() = _default_value;
+    }
+
+    template <typename T>
+    void StoreData(numtk::vec3u const& _point, uint8_t _id, T&& _data) {
+        using DataType = std::remove_cvref<T>::type;
+        Set(_point, true);
+
+        if (!layers.count(_id))
+            return;
+        DataLayer const& layer = layers.at(_id);
+        if (layer.payload_size != sizeof(DataType))
+            return;
+
+        Node const* node = FindDeepestNode(_point);
+        uint64_t node_data_id = NodeDataLayerID(node, _id);
+
+        if (!node_data.count(node_data_id))
+            node_data.emplace(node_data_id,
+                              std::unique_ptr<uint8_t[]>{
+                                  new uint8_t[layer.payload_size * Node::kChildCount]
+                              }
+            );
+
+        DataType* data_store = (DataType*)node_data.at(node_data_id).get();
+        data_store[node->ChildIndex(node->LocalPoint(_point))] = _data;
+    }
+
+    template <typename T>
+    std::remove_cvref<T>::type const& LoadData(numtk::vec3u const& _point, uint8_t _id) const {
+        using DataType = std::remove_cvref<T>::type;
+        static DataType const kDefaultValue = DataType{};
+
+        if (!layers.count(_id))
+            return kDefaultValue;
+        DataLayer const& layer = layers.at(_id);
+        if (layer.payload_size != sizeof(DataType))
+            return kDefaultValue;
+
+        if (!Test(_point))
+            return *(DataType const*)layer.default_value.get();
+
+        Node const* node = FindDeepestNode(_point);
+        uint64_t node_data_id = NodeDataLayerID(node, _id);
+
+        if (!node_data.count(node_data_id))
+            return *(DataType const*)layer.default_value.get();
+
+        DataType const* data_store = (DataType const*)node_data.at(node_data_id).get();
+        return data_store[node->ChildIndex(node->LocalPoint(_point))];
+    }
+
+    static uint64_t NodeDataLayerID(Node const* _node, uint8_t _id) {
+        assert(!((uint64_t)_node & ~0x0000ffffffffffffull));
+        return ((uint64_t)_node & 0x0000ffffffffffffull) | ((uint64_t)_id << 56);
     }
 
     struct DataLayer {
         size_t payload_size;
-        std::function<void(void*)> dtor;
+        std::unique_ptr<uint8_t[]> default_value;
+        void(*dtor)(void*);
+        void(*copy)(void*, void const*);
     };
-    std::unordered_map<uint32_t, DataLayer> layers{};
+    std::unordered_map<uint8_t, DataLayer> layers{};
+    std::unordered_map<uint64_t, std::unique_ptr<uint8_t[]>> node_data{};
 };
 
 } // namespace voxtk
@@ -245,7 +315,7 @@ Region<DataType>::Region(Region const& _other)
         node_queue.pop_back();
 
         uint16_t child_index = current_node->child_mask.NextIndex();
-        while (child_index < 512)
+        while (child_index < VoxelMask::kVolume)
         {
             Node* new_node = node_pool[node_pool.Reserve()];
             *new_node = *(current_node->children[child_index]);
@@ -269,7 +339,7 @@ Region<DataType>& Region<DataType>::operator=(Region const& _other)
         node_queue.pop_back();
 
         uint16_t child_index = current_node->child_mask.NextIndex();
-        while (child_index < 512)
+        while (child_index < VoxelMask::kVolume)
         {
             Node* new_node = node_pool[node_pool.Reserve()];
             *new_node = *(current_node->children[child_index]);
@@ -762,7 +832,7 @@ BinaryRegion::BinaryRegion(BinaryRegion const& _other)
         node_queue.pop_back();
 
         uint16_t child_index = current_node->child_mask.NextIndex();
-        while (child_index < 512)
+        while (child_index < Node::kChildCount)
         {
             Node* new_node = node_pool[node_pool.Reserve()];
             *new_node = *(current_node->children[child_index]);
@@ -785,7 +855,7 @@ BinaryRegion& BinaryRegion::operator=(BinaryRegion const& _other)
         node_queue.pop_back();
 
         uint16_t child_index = current_node->child_mask.NextIndex();
-        while (child_index < 512)
+        while (child_index < Node::kChildCount)
         {
             Node* new_node = node_pool[node_pool.Reserve()];
             *new_node = *(current_node->children[child_index]);
@@ -1452,7 +1522,7 @@ uint16_t VoxelMask::NextIndex(uint16_t index) const
         index = first_pack * 64;
     }
     if (first_pack >= 8)
-        return 512;
+        return VoxelMask::kVolume;
 
     uint16_t tzc = numtk::BitTrailingZeroCount(bits[first_pack] >> (index % 64));
     return index + tzc;
