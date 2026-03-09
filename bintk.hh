@@ -26,6 +26,20 @@ inline std::uint32_t UnpackBytes(std::uint32_t count, std::uint8_t const*& strea
     return output;
 }
 
+inline std::uint32_t UnpackBytesBE(std::uint32_t count, std::uint8_t const*& stream)
+{
+    std::uint32_t output = 0;
+    if (count > 0)
+        output |= *stream++;
+    if (count > 1)
+        output = output << 8 | ((uint32_t)*stream++);
+    if (count > 2)
+        output = output << 8 | ((uint32_t)*stream++);
+    if (count > 3)
+        output = output << 8 | ((uint32_t)*stream++);
+    return output;
+}
+
 inline void SkipBits(std::uint32_t count, std::uint8_t const*& stream, std::uint32_t& offset)
 {
     std::uint32_t head = std::min(8 - offset, count)%8;
