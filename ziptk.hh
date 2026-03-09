@@ -8,6 +8,17 @@
 namespace ziptk
 {
 
+struct GZipHeader
+{
+    uint16_t magic;
+    uint8_t compression;
+    uint8_t header_flags;
+    uint32_t timestamp;
+    uint8_t compression_flags;
+    uint8_t os_id;
+};
+
+GZipHeader ExtractGZip(uint8_t const*& stream);
 std::vector<uint8_t> Inflate(uint8_t const* stream);
 
 } // namespace ziptk
@@ -248,15 +259,17 @@ std::uint32_t UnpackBits(std::uint32_t count, std::uint8_t const*& stream, std::
     return v;
 }
 
-struct GZipHeader
+GZipHeader ExtractGZip(std::uint8_t const*& stream)
 {
-    uint16_t magic;
-    uint8_t compression;
-    uint8_t header_flags;
-    uint32_t timestamp;
-    uint8_t compression_flags;
-    uint8_t os_id;
-};
+    GZipHeader header = {};
+    header.magic = (uint16_t)UnpackBytes(2, stream);
+    header.compression = (uint8_t)UnpackBytes(1, stream);
+    header.header_flags = (uint8_t)UnpackBytes(1, stream);
+    header.timestamp = UnpackBytes(4, stream);
+    header.compression_flags = (uint8_t)UnpackBytes(1, stream);
+    header.os_id = (uint8_t)UnpackBytes(1, stream);
+    return header;
+}
 
 std::vector<uint8_t> Inflate(std::uint8_t const* stream)
 {

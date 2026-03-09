@@ -409,7 +409,9 @@ int main(int argc, char const** argv)
         std::fread(contents.data(), 1, size, file);
         std::fclose(file);
 
-        std::vector<uint8_t> output_stream = ziptk::Inflate((std::uint8_t const*)contents.data());
+        std::uint8_t const* input_stream = (std::uint8_t const*)contents.data();
+        ziptk::GZipHeader gzip_header = ziptk::ExtractGZip(input_stream);
+        std::vector<uint8_t> output_stream = ziptk::Inflate(input_stream);
 
         uint8_t const* stream = output_stream.data();
         NBTTag current_field = NBTTag::TAG_End;
