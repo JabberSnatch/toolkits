@@ -26,6 +26,7 @@ std::vector<uint8_t> Inflate(uint8_t const* stream);
 #ifdef ZIPTK_IMPLEMENTATION
 
 #include <cstring>
+#include "bintk.hh"
 
 namespace ziptk
 {
@@ -153,121 +154,15 @@ static const std::array<uint32_t, 30> kDistanceExtraBits = {
     9, 9, 10, 10, 11, 11, 12, 12, 13, 13
 };
 
-std::uint16_t ReverseBits(std::uint16_t bits)
-{
-    bits = ((bits & 0x00ff) << 8) | ((bits & 0xff00) >> 8);
-    bits = ((bits & 0x0f0f) << 4) | ((bits & 0xf0f0) >> 4);
-    bits = ((bits & 0x3333) << 2) | ((bits & 0xcccc) >> 2);
-    bits = ((bits & 0x5555) << 1) | ((bits & 0xaaaa) >> 1);
-    return bits;
-}
-
-std::uint32_t UnpackBytes(std::uint32_t count, std::uint8_t const*& stream)
-{
-    std::uint32_t output = 0;
-    if (count > 0)
-        output |= *stream++;
-    if (count > 1)
-        output |= ((uint32_t)*stream++ << 8);
-    if (count > 2)
-        output |= ((uint32_t)*stream++ << 16);
-    if (count > 3)
-        output |= ((uint32_t)*stream++ << 24);
-    return output;
-}
-
-void AdvanceBits(std::uint32_t count, std::uint8_t const*& stream, std::uint32_t& offset)
-{
-    std::uint32_t head = std::min(8 - offset, count)%8;
-    std::uint32_t tail = (count > head) ? (count-head)%8 : 0;
-    std::uint32_t body = count - head - tail;
-
-    offset += head;
-    if (offset > 7)
-    {
-        offset = offset % 8;
-        ++stream;
-    }
-
-    stream += body/8;
-    offset += tail;
-}
-
-std::uint32_t PeekBits(std::uint32_t count, std::uint8_t const* stream, std::uint32_t offset)
-{
-    std::uint32_t head = std::min(8 - offset, count)%8;
-    std::uint32_t tail = (count > head) ? (count-head)%8 : 0;
-    std::uint32_t body = count - head - tail;
-
-    if (count == 0)
-        return 0;
-
-    std::uint32_t v = 0;
-    if (head != 0)
-    {
-        v |= ((*stream >> offset) & ((1 << head)-1));
-        offset += head;
-        if (offset > 7)
-        {
-            offset = offset % 8;
-            ++stream;
-        }
-    }
-
-    if (body != 0)
-        v |= UnpackBytes(body/8, stream) << head;
-
-    if (tail != 0)
-    {
-        v |= (*stream & ((1 << tail)-1)) << (head + body);
-        offset += tail;
-    }
-
-    return v;
-}
-
-std::uint32_t UnpackBits(std::uint32_t count, std::uint8_t const*& stream, std::uint32_t& offset)
-{
-    std::uint32_t head = std::min(8 - offset, count)%8;
-    std::uint32_t tail = (count > head) ? (count-head)%8 : 0;
-    std::uint32_t body = count - head - tail;
-
-    if (count == 0)
-        return 0;
-
-    std::uint32_t v = 0;
-    if (head != 0)
-    {
-        v |= ((*stream >> offset) & ((1 << head)-1));
-        offset += head;
-        if (offset > 7)
-        {
-            offset = offset % 8;
-            ++stream;
-        }
-    }
-
-    if (body != 0)
-        v |= UnpackBytes(body/8, stream) << head;
-
-    if (tail != 0)
-    {
-        v |= (*stream & ((1 << tail)-1)) << (head + body);
-        offset += tail;
-    }
-
-    return v;
-}
-
 GZipHeader ExtractGZip(std::uint8_t const*& stream)
 {
     GZipHeader header = {};
-    header.magic = (uint16_t)UnpackBytes(2, stream);
-    header.compression = (uint8_t)UnpackBytes(1, stream);
-    header.header_flags = (uint8_t)UnpackBytes(1, stream);
-    header.timestamp = UnpackBytes(4, stream);
-    header.compression_flags = (uint8_t)UnpackBytes(1, stream);
-    header.os_id = (uint8_t)UnpackBytes(1, stream);
+    header.magic = (uint16_t)bintk::UnpackBytes(2, stream);
+    header.compression = (uint8_t)bintk::UnpackBytes(1, stream);
+    header.header_flags = (uint8_t)bintk::UnpackBytes(1, stream);
+    header.timestamp = bintk::UnpackBytes(4, stream);
+    header.compression_flags = (uint8_t)bintk::UnpackBytes(1, stream);
+    header.os_id = (uint8_t)bintk::UnpackBytes(1, stream);
     return header;
 }
 
@@ -276,21 +171,11 @@ std::vector<uint8_t> Inflate(std::uint8_t const* stream)
     std::vector<uint8_t> output_stream = {};
     std::uint8_t const* base = stream;
 
-#if 0
-    GZipHeader header = {};
-    header.magic = (uint16_t)UnpackBytes(2, stream);
-    header.compression = (uint8_t)UnpackBytes(1, stream);
-    header.header_flags = (uint8_t)UnpackBytes(1, stream);
-    header.timestamp = UnpackBytes(4, stream);
-    header.compression_flags = (uint8_t)UnpackBytes(1, stream);
-    header.os_id = (uint8_t)UnpackBytes(1, stream);
-#endif
-
     std::uint32_t offset = 0;
 
     for (;;)
     {
-        uint32_t block_header = UnpackBits(3, stream, offset);
+        uint32_t block_header = bintk::UnpackBits(3, stream, offset);
         bool BFINAL = !!(block_header&1);
         BlockType BTYPE = (BlockType)(block_header >> 1);
 
@@ -303,8 +188,8 @@ std::vector<uint8_t> Inflate(std::uint8_t const* stream)
         if (BTYPE == BlockType::NoCompression)
         {
             ++stream;
-            std::uint32_t LEN = UnpackBytes(2, stream);
-            std::uint32_t NLEN = UnpackBytes(2, stream);
+            std::uint32_t LEN = bintk::UnpackBytes(2, stream);
+            std::uint32_t NLEN = bintk::UnpackBytes(2, stream);
 
             stream += LEN;
         }
@@ -312,9 +197,9 @@ std::vector<uint8_t> Inflate(std::uint8_t const* stream)
         {
             if (BTYPE == BlockType::DynamicCodes)
             {
-                uint32_t HLIT = UnpackBits(5, stream, offset);
-                uint32_t HDIST = UnpackBits(5, stream, offset);
-                uint32_t HCLEN = UnpackBits(4, stream, offset);
+                uint32_t HLIT = bintk::UnpackBits(5, stream, offset);
+                uint32_t HDIST = bintk::UnpackBits(5, stream, offset);
+                uint32_t HCLEN = bintk::UnpackBits(4, stream, offset);
 
                 static const std::vector<uint32_t> kCodeLengthTable = {
                     16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15
@@ -323,7 +208,8 @@ std::vector<uint8_t> Inflate(std::uint8_t const* stream)
                 std::vector<uint32_t> code_lengths{};
                 code_lengths.resize(19);
                 for (uint32_t code_index = 0; code_index < HCLEN+4; ++code_index)
-                    code_lengths[kCodeLengthTable[code_index]] = UnpackBits(3, stream, offset);
+                    code_lengths[kCodeLengthTable[code_index]] =
+                        bintk::UnpackBits(3, stream, offset);
 
                 HuffmannTable secondary_code = GenerateHuffmannTable(code_lengths);
 
@@ -332,14 +218,16 @@ std::vector<uint8_t> Inflate(std::uint8_t const* stream)
                 uint32_t entry_index = 0;
                 while (entry_index < HLIT+257)
                 {
-                    uint16_t stream_bits = ReverseBits((uint16_t)PeekBits(16, stream, offset));
+                    uint16_t stream_bits = bintk::ReverseBits(
+                        (uint16_t)bintk::PeekBits(16, stream, offset)
+                    );
                     HuffmannTable::Entry const& entry = secondary_code.Lookup(stream_bits);
-                    AdvanceBits(entry.size, stream, offset);
+                    bintk::SkipBits(entry.size, stream, offset);
 
                     if (entry.value == 16)
                     {
                         uint32_t value = litlen_code_lengths.back();
-                        uint32_t repeat_count = UnpackBits(2, stream, offset) + 3;
+                        uint32_t repeat_count = bintk::UnpackBits(2, stream, offset) + 3;
                         for (uint32_t repeat = 0; repeat < repeat_count; ++repeat)
                             litlen_code_lengths.push_back(value);
                         entry_index += repeat_count;
@@ -347,7 +235,7 @@ std::vector<uint8_t> Inflate(std::uint8_t const* stream)
 
                     else if (entry.value == 17)
                     {
-                        uint32_t repeat_count = UnpackBits(3, stream, offset) + 3;
+                        uint32_t repeat_count = bintk::UnpackBits(3, stream, offset) + 3;
                         for (uint32_t repeat = 0; repeat < repeat_count; ++repeat)
                             litlen_code_lengths.push_back(0);
                         entry_index += repeat_count;
@@ -355,7 +243,7 @@ std::vector<uint8_t> Inflate(std::uint8_t const* stream)
 
                     else if (entry.value == 18)
                     {
-                        uint32_t repeat_count = UnpackBits(7, stream, offset) + 11;
+                        uint32_t repeat_count = bintk::UnpackBits(7, stream, offset) + 11;
                         for (uint32_t repeat = 0; repeat < repeat_count; ++repeat)
                             litlen_code_lengths.push_back(0);
                         entry_index += repeat_count;
@@ -381,14 +269,16 @@ std::vector<uint8_t> Inflate(std::uint8_t const* stream)
 
                 while (entry_index < HDIST+HLIT+258)
                 {
-                    uint16_t stream_bits = ReverseBits((uint16_t)PeekBits(16, stream, offset));
+                    uint16_t stream_bits = bintk::ReverseBits(
+                        (uint16_t)bintk::PeekBits(16, stream, offset)
+                    );
                     HuffmannTable::Entry const& entry = secondary_code.Lookup(stream_bits);
-                    AdvanceBits(entry.size, stream, offset);
+                    bintk::SkipBits(entry.size, stream, offset);
 
                     if (entry.value == 16)
                     {
                         uint32_t value = dist_code_lengths.back();
-                        uint32_t repeat_count = UnpackBits(2, stream, offset) + 3;
+                        uint32_t repeat_count = bintk::UnpackBits(2, stream, offset) + 3;
                         for (uint32_t repeat = 0; repeat < repeat_count; ++repeat)
                             dist_code_lengths.push_back(value);
                         entry_index += repeat_count;
@@ -396,7 +286,7 @@ std::vector<uint8_t> Inflate(std::uint8_t const* stream)
 
                     else if (entry.value == 17)
                     {
-                        uint32_t repeat_count = UnpackBits(3, stream, offset) + 3;
+                        uint32_t repeat_count = bintk::UnpackBits(3, stream, offset) + 3;
                         for (uint32_t repeat = 0; repeat < repeat_count; ++repeat)
                             dist_code_lengths.push_back(0);
                         entry_index += repeat_count;
@@ -404,7 +294,7 @@ std::vector<uint8_t> Inflate(std::uint8_t const* stream)
 
                     else if (entry.value == 18)
                     {
-                        uint32_t repeat_count = UnpackBits(7, stream, offset) + 11;
+                        uint32_t repeat_count = bintk::UnpackBits(7, stream, offset) + 11;
                         for (uint32_t repeat = 0; repeat < repeat_count; ++repeat)
                             dist_code_lengths.push_back(0);
                         entry_index += repeat_count;
@@ -421,9 +311,11 @@ std::vector<uint8_t> Inflate(std::uint8_t const* stream)
 
                 for (;;)
                 {
-                    uint16_t stream_bits = ReverseBits((uint16_t)PeekBits(16, stream, offset));
+                    uint16_t stream_bits = bintk::ReverseBits(
+                        (uint16_t)bintk::PeekBits(16, stream, offset)
+                    );
                     HuffmannTable::Entry const& litlen_entry = litlen_code.Lookup(stream_bits);
-                    AdvanceBits(litlen_entry.size, stream, offset);
+                    bintk::SkipBits(litlen_entry.size, stream, offset);
 
                     if (litlen_entry.value == 256)
                         break;
@@ -436,18 +328,20 @@ std::vector<uint8_t> Inflate(std::uint8_t const* stream)
                         {
                             uint32_t const base = kLengthBase[litlen_entry.value - 257];
                             uint32_t const extra_bits = kLengthExtraBits[litlen_entry.value - 257];
-                            length = base + UnpackBits(extra_bits, stream, offset);
+                            length = base + bintk::UnpackBits(extra_bits, stream, offset);
                         }
 
-                        stream_bits = ReverseBits((uint16_t)PeekBits(16, stream, offset));
+                        stream_bits = bintk::ReverseBits(
+                            (uint16_t)bintk::PeekBits(16, stream, offset)
+                        );
                         HuffmannTable::Entry const& dist_entry = dist_code.Lookup(stream_bits);
-                        AdvanceBits(dist_entry.size, stream, offset);
+                        bintk::SkipBits(dist_entry.size, stream, offset);
 
                         uint32_t distance = 0;
                         {
                             uint32_t const base = kDistanceBase[dist_entry.value];
                             uint32_t const extra_bits = kDistanceExtraBits[dist_entry.value];
-                            distance = base + UnpackBits(extra_bits, stream, offset);
+                            distance = base + bintk::UnpackBits(extra_bits, stream, offset);
                         }
 
                         uint32_t begin = output_stream.size()-distance;
