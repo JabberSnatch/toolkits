@@ -133,6 +133,7 @@ struct vec4 : public std::array<scalar, 4>
     scalar const& w() const { return static_cast<scalar const&>(const_cast<vec4*>(this)->w()); }
 
     vec4 operator+(vec4 const& o) const { return { x()+o.x(), y()+o.y(), z()+o.z(), w()+o.w() }; }
+    vec4& operator+=(vec4 const& o) { x()+=o.x(); y()+=o.y(); z()+=o.z(); w()+=o.w(); return *this; }
     vec4 operator-(vec4 const& o) const { return { x()-o.x(), y()-o.y(), z()-o.z(), w()-o.w() }; }
     vec4 operator*(vec4 const& o) const { return { x()*o.x(), y()*o.y(), z()*o.z(), w()*o.w() }; }
     vec4 operator*(scalar s) const { return { x()*s, y()*s, z()*s, w()*s }; }

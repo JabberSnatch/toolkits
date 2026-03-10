@@ -2,6 +2,7 @@
 #include <iostream>
 #include <vector>
 
+#define ZIPTK_IMPLEMENTATION
 #include "pngtk.hh"
 
 std::vector<uint8_t> LoadFile(char const* _path)
@@ -26,7 +27,24 @@ int main(int argc, char const** argv)
         return 1;
 
     std::vector<uint8_t> memory = LoadFile(argv[1]);
-    pngtk::LoadPNG(memory.data(), memory.size());
+    pngtk::PNGFile png_file = {};
+    pngtk::LoadPNG(memory.data(), memory.size(), &png_file);
+
+    float weight = 0.f;
+    for (numtk::vec4<uint16_t> const& pixel : png_file.pixel_data)
+        if (pixel[3] != 0)
+            weight += 1.f;
+
+    weight = 1.f / weight;
+
+    numtk::vec4<float> accum = {};
+    for (numtk::vec4<uint16_t> const& pixel : png_file.pixel_data)
+        accum += pixel.cast<float>() * weight;
+
+    std::cout << "[ " << (uint16_t)std::round(accum[0])
+              << ", " << (uint16_t)std::round(accum[1])
+              << ", " << (uint16_t)std::round(accum[2])
+              << " ]" << std::endl;
 
     return 0;
 }

@@ -19,6 +19,18 @@ struct GZipHeader
 };
 
 GZipHeader ExtractGZip(uint8_t const*& stream);
+
+struct ZLibHeader
+{
+    uint8_t CM;
+    uint8_t CINFO;
+    uint8_t FCHECK;
+    uint8_t FDICT;
+    uint8_t FLEVEL;
+    uint32_t DICTID;
+};
+ZLibHeader ExtractZLib(uint8_t const*& stream);
+
 std::vector<uint8_t> Inflate(uint8_t const* stream);
 
 } // namespace ziptk
@@ -166,6 +178,21 @@ GZipHeader ExtractGZip(std::uint8_t const*& stream)
     return header;
 }
 
+ZLibHeader ExtractZLib(std::uint8_t const*& stream)
+{
+    std::uint32_t offset = 0;
+    ZLibHeader header = {};
+    header.CM = (uint8_t)bintk::UnpackBits(4, stream, offset);
+    header.CINFO = (uint8_t)bintk::UnpackBits(4, stream, offset);
+    header.FCHECK = (uint8_t)bintk::UnpackBits(5, stream, offset);
+    header.FDICT = (uint8_t)bintk::UnpackBits(1, stream, offset);
+    header.FLEVEL = (uint8_t)bintk::UnpackBits(2, stream, offset);
+    header.DICTID = 0u;
+    if (header.FDICT)
+        header.DICTID = bintk::UnpackBytes(4, stream);
+    return header;
+}
+
 std::vector<uint8_t> Inflate(std::uint8_t const* stream)
 {
     std::vector<uint8_t> output_stream = {};
@@ -190,6 +217,12 @@ std::vector<uint8_t> Inflate(std::uint8_t const* stream)
             ++stream;
             std::uint32_t LEN = bintk::UnpackBytes(2, stream);
             std::uint32_t NLEN = bintk::UnpackBytes(2, stream);
+
+            std::uint32_t output_offset = output_stream.size();
+            output_stream.resize(output_stream.size() + LEN);
+            std::memcpy(output_stream.data() + output_offset,
+                        stream,
+                        (std::size_t)LEN);
 
             stream += LEN;
         }
@@ -365,6 +398,18 @@ std::vector<uint8_t> Inflate(std::uint8_t const* stream)
         // TEMPORARY STOPPER
         break;
     }
+
+    if (offset != 0)
+        ++stream;
+    uint32_t stream_checksum = bintk::UnpackBytesBE(4, stream);
+    uint32_t checksum_s1 = 1;
+    uint32_t checksum_s2 = 0;
+    for (uint8_t byte : output_stream)
+    {
+        checksum_s1 = (checksum_s1 + byte) % 65521u;
+        checksum_s2 = (checksum_s2 + checksum_s1) % 65521u;
+    }
+    uint32_t computed_checksum = checksum_s2*65536 + checksum_s1;
 
     return output_stream;
 }
