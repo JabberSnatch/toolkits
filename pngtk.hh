@@ -64,13 +64,14 @@ inline void LoadPNG(uint8_t const* _stream, size_t _size, PNGFile* _png_file)
 
     if (signature != 0x89504E470D0A1A0Aull)
     {
-        std::cout << "Invalid signature" << std::endl;
+        std::cerr << "Error : Invalid signature" << std::endl;
         return;
     }
 
     PNGHeader header = {};
     std::vector<numtk::vec3<uint8_t>> palette = {};
     std::vector<uint8_t> palette_alpha = {};
+    bool alpha_color_set = false;
     numtk::vec3<uint16_t> alpha_color = {};
     std::vector<uint8_t> data_stream = {};
 
@@ -88,8 +89,6 @@ inline void LoadPNG(uint8_t const* _stream, size_t _size, PNGFile* _png_file)
 
         if (CompareTag(tag_start, 'I', 'H', 'D', 'R'))
         {
-            std::cout << "IHDR" << std::endl;
-
             header.width = bintk::UnpackBytesBE(4, block);
             header.height = bintk::UnpackBytesBE(4, block);
             header.bit_depth = (uint8_t)bintk::UnpackBytesBE(1, block);
@@ -97,6 +96,9 @@ inline void LoadPNG(uint8_t const* _stream, size_t _size, PNGFile* _png_file)
             header.compression = (uint8_t)bintk::UnpackBytesBE(1, block);
             header.filter = (uint8_t)bintk::UnpackBytesBE(1, block);
             header.interlace = (InterlaceMode)bintk::UnpackBytesBE(1, block);
+
+            if (header.interlace)
+                std::cerr << "Error : Unsupported interlace mode" << std::endl;
 
             pixel_count = header.width * header.height;
             pixel_channel_count =
@@ -115,8 +117,6 @@ inline void LoadPNG(uint8_t const* _stream, size_t _size, PNGFile* _png_file)
 
         else if (CompareTag(tag_start, 'P', 'L', 'T', 'E'))
         {
-            std::cout << "PLTE" << std::endl;
-
             uint32_t entry_count = chunk_length / 3;
             palette.reserve(entry_count);
             for (uint32_t index = 0u; index < entry_count; ++index)
@@ -132,10 +132,10 @@ inline void LoadPNG(uint8_t const* _stream, size_t _size, PNGFile* _png_file)
 
         else if (CompareTag(tag_start, 't', 'R', 'N', 'S'))
         {
-            std::cout << "tRNS" << std::endl;
             if (header.color_type == ColorType_Greyscale)
             {
                 alpha_color.x = (uint16_t)bintk::UnpackBytesBE(2, block);
+                alpha_color_set = true;
             }
             else if (header.color_type == ColorType_Truecolor)
             {
@@ -144,6 +144,7 @@ inline void LoadPNG(uint8_t const* _stream, size_t _size, PNGFile* _png_file)
                     (uint16_t)bintk::UnpackBytesBE(2, block),
                     (uint16_t)bintk::UnpackBytesBE(2, block)
                 };
+                alpha_color_set = true;
             }
             else if (header.color_type == ColorType_Indexed)
             {
@@ -156,19 +157,17 @@ inline void LoadPNG(uint8_t const* _stream, size_t _size, PNGFile* _png_file)
 
         else if (CompareTag(tag_start, 'I', 'D', 'A', 'T'))
         {
-            std::cout << "IDAT" << std::endl;
             std::copy(block, block+chunk_length,
                       std::back_inserter(data_stream));
         }
 
         else if (CompareTag(tag_start, 'I', 'E', 'N', 'D'))
         {
-            std::cout << "IEND" << std::endl;
         }
 
         else
         {
-            std::cerr << "Unknown tag " << std::string((char const*)_stream, 4) << std::endl;
+            std::cerr << "Error : Unknown tag " << std::string((char const*)_stream, 4) << std::endl;
         }
 
         _stream += chunk_length + 4;
@@ -179,7 +178,8 @@ inline void LoadPNG(uint8_t const* _stream, size_t _size, PNGFile* _png_file)
     {
         uint8_t const* block = data_stream.data();
 
-        ziptk::ExtractZLib(block);
+        ziptk::ZLibHeader zlib_header = ziptk::ExtractZLib(block);
+        (void)zlib_header;
         std::vector<uint8_t> block_data = ziptk::Inflate(block);
 
         uint8_t const* block_stream = block_data.data();
@@ -203,7 +203,50 @@ inline void LoadPNG(uint8_t const* _stream, size_t _size, PNGFile* _png_file)
                 filter = (FilterMode)((uint32_t)filter & 1); // Up -> None, Average -> Sub
 
             if (filter == FilterMode_Paeth)
-                std::cerr << "Unsupported filter" << std::endl;
+            {
+                uint8_t* recon = filtered_scanline[scanline_index & 1].data();
+                scanline = recon;
+
+                static auto PaethPredictor = [](
+                    uint8_t const* scanline,
+                    uint8_t const* prev_scanline,
+                    uint32_t byte_index,
+                    uint32_t pixel_byte_stride)
+                {
+                    int16_t a = (int16_t)(
+                        byte_index > pixel_byte_stride
+                        ? scanline[byte_index - pixel_byte_stride]
+                        : (uint8_t)0);
+
+                    int16_t b = (int16_t)(
+                        prev_scanline
+                        ? prev_scanline[byte_index]
+                        : (uint8_t)0);
+
+                    int16_t c = (int16_t)(
+                        prev_scanline && byte_index > pixel_byte_stride
+                        ? prev_scanline[byte_index - pixel_byte_stride]
+                        : (uint8_t)0);
+
+                    int16_t p = a + b - c;
+                    int16_t pa = std::abs(p - a);
+                    int16_t pb = std::abs(p - b);
+                    int16_t pc = std::abs(p - c);
+                    if (pa <= pb && pa <= pc) return a;
+                    else if (pb <= pc) return b;
+                    else return c;
+                };
+
+                for (uint32_t byte_index = 0;
+                     byte_index < scanline_byte_count;
+                     ++byte_index)
+                {
+                    recon[byte_index] = block_stream[byte_index]
+                        + PaethPredictor(scanline, previous_scanline,
+                                         byte_index, pixel_byte_stride);
+                }
+            }
+
             else if (filter != FilterMode_None)
             {
                 uint8_t* recon = filtered_scanline[scanline_index & 1].data();
@@ -220,11 +263,13 @@ inline void LoadPNG(uint8_t const* _stream, size_t _size, PNGFile* _png_file)
                         recon[byte_index] = block_stream[byte_index]
                             + scanline[byte_index - pixel_byte_stride];
                     }
+
                     else if (filter == FilterMode_Up)
                     {
                         recon[byte_index] = block_stream[byte_index]
                             + previous_scanline[byte_index];
                     }
+
                     else if (filter == FilterMode_Average)
                     {
                         recon[byte_index] = block_stream[byte_index]
@@ -257,6 +302,8 @@ inline void LoadPNG(uint8_t const* _stream, size_t _size, PNGFile* _png_file)
                         pixel_value[3] = (uint16_t)bintk::UnpackBitsBE(
                             header.bit_depth, current_byte, bit_offset);
                     }
+                    else
+                        pixel_value[3] = (uint16_t)0xffff;
                 }
                 else
                 {
@@ -269,6 +316,16 @@ inline void LoadPNG(uint8_t const* _stream, size_t _size, PNGFile* _png_file)
                     pixel_value[3] = (uint32_t)color_index >= palette_alpha.size()
                         ? 255
                         : (uint16_t)palette_alpha[color_index];
+                }
+
+                if (alpha_color_set)
+                {
+                    if (alpha_color.x != pixel_value[0]
+                        || alpha_color.y != pixel_value[1]
+                        || alpha_color.z != pixel_value[2])
+                        pixel_value[3] = (uint16_t)0xffff;
+                    else
+                        pixel_value[3] = (uint16_t)0;
                 }
 
                 buffer[scanline_index * header.width + pixel_index] = pixel_value;
