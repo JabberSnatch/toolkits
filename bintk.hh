@@ -123,4 +123,37 @@ inline std::uint32_t UnpackBits(std::uint32_t count, std::uint8_t const*& stream
     return v;
 }
 
+inline std::uint32_t UnpackBitsBE(std::uint32_t count, std::uint8_t const*& stream, std::uint32_t& offset)
+{
+    std::uint32_t head = std::min(8 - offset, count)%8;
+    std::uint32_t tail = (count > head) ? (count-head)%8 : 0;
+    std::uint32_t body = count - head - tail;
+
+    if (count == 0)
+        return 0;
+
+    std::uint32_t v = 0;
+    if (head != 0)
+    {
+        v |= (*stream & ((1 << (8-offset))-1)) >> (8-offset-head);
+        offset += head;
+        if (offset > 7)
+        {
+            offset = offset % 8;
+            ++stream;
+        }
+    }
+
+    if (body != 0)
+        v = v << body | UnpackBytesBE(body/8, stream);
+
+    if (tail != 0)
+    {
+        v = v << head | (*stream >> (8-tail));
+        offset += tail;
+    }
+
+    return v;
+}
+
 } // namespace bintk

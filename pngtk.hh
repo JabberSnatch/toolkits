@@ -30,6 +30,14 @@ enum InterlaceMode : uint8_t {
     InterlaceMode_Adam7 = 1
 };
 
+enum FilterMode {
+    FilterMode_None = 0,
+    FilterMode_Sub = 1,
+    FilterMode_Up = 2,
+    FilterMode_Average = 3,
+    FilterMode_Paeth = 4,
+};
+
 struct PNGHeader {
     uint32_t width;
     uint32_t height;
@@ -64,9 +72,12 @@ inline void LoadPNG(uint8_t const* _stream, size_t _size, PNGFile* _png_file)
     std::vector<numtk::vec3<uint8_t>> palette = {};
     std::vector<uint8_t> palette_alpha = {};
     numtk::vec3<uint16_t> alpha_color = {};
+    std::vector<uint8_t> data_stream = {};
+
     std::vector<numtk::vec4<uint16_t>> buffer = {};
-    uint32_t pixel_index = 0;
     uint32_t pixel_count = 0;
+    uint32_t pixel_channel_count = 0;
+    uint32_t pixel_byte_stride = 0;
 
     for (;;)
     {
@@ -88,6 +99,17 @@ inline void LoadPNG(uint8_t const* _stream, size_t _size, PNGFile* _png_file)
             header.interlace = (InterlaceMode)bintk::UnpackBytesBE(1, block);
 
             pixel_count = header.width * header.height;
+            pixel_channel_count =
+                ((header.color_type & ColorType_TruecolorBit) ? 3 : 1)
+                + ((header.color_type & ColorType_AlphaBit) ? 1 : 0);
+
+            if (header.color_type != ColorType_Indexed)
+                pixel_byte_stride = header.bit_depth < 8
+                    ? 1
+                    : header.bit_depth * pixel_channel_count;
+            else
+                pixel_byte_stride = 1;
+
             buffer.resize(pixel_count);
         }
 
@@ -113,14 +135,14 @@ inline void LoadPNG(uint8_t const* _stream, size_t _size, PNGFile* _png_file)
             std::cout << "tRNS" << std::endl;
             if (header.color_type == ColorType_Greyscale)
             {
-                alpha_color.x = (uint16_t)bintk::UnpackBytes(2, block);
+                alpha_color.x = (uint16_t)bintk::UnpackBytesBE(2, block);
             }
             else if (header.color_type == ColorType_Truecolor)
             {
                 alpha_color = numtk::vec3<uint16_t>{
-                    (uint16_t)bintk::UnpackBytes(2, block),
-                    (uint16_t)bintk::UnpackBytes(2, block),
-                    (uint16_t)bintk::UnpackBytes(2, block)
+                    (uint16_t)bintk::UnpackBytesBE(2, block),
+                    (uint16_t)bintk::UnpackBytesBE(2, block),
+                    (uint16_t)bintk::UnpackBytesBE(2, block)
                 };
             }
             else if (header.color_type == ColorType_Indexed)
@@ -128,56 +150,15 @@ inline void LoadPNG(uint8_t const* _stream, size_t _size, PNGFile* _png_file)
                 uint32_t entry_count = chunk_length;
                 palette_alpha.reserve(entry_count);
                 for (uint32_t index = 0u; index < entry_count; ++index)
-                    palette_alpha.push_back((uint8_t)bintk::UnpackBytes(1, block));
+                    palette_alpha.push_back((uint8_t)bintk::UnpackBytesBE(1, block));
             }
         }
 
         else if (CompareTag(tag_start, 'I', 'D', 'A', 'T'))
         {
             std::cout << "IDAT" << std::endl;
-            ziptk::ExtractZLib(block);
-            std::vector<uint8_t> block_data = ziptk::Inflate(block);
-
-            uint8_t const* block_stream = block_data.data();
-            uint32_t bit_offset = 0;
-            while (block_stream - block_data.data() < (ptrdiff_t)block_data.size()
-                   && pixel_index < pixel_count)
-            {
-                numtk::vec4<uint16_t> pixel_value = {};
-                if (header.color_type != ColorType_Indexed)
-                {
-                    pixel_value[0] = (uint16_t)bintk::UnpackBits(
-                        header.bit_depth, block_stream, bit_offset);
-
-                    if (header.color_type & ColorType_TruecolorBit)
-                    {
-                        pixel_value[1] = (uint16_t)bintk::UnpackBits(
-                            header.bit_depth, block_stream, bit_offset);
-                        pixel_value[2] = (uint16_t)bintk::UnpackBits(
-                            header.bit_depth, block_stream, bit_offset);
-                    }
-
-                    if (header.color_type & ColorType_AlphaBit)
-                    {
-                        pixel_value[3] = (uint16_t)bintk::UnpackBits(
-                            header.bit_depth, block_stream, bit_offset);
-                    }
-                }
-                else
-                {
-                    uint8_t color_index = (uint8_t)bintk::UnpackBits(
-                        header.bit_depth, block_stream, bit_offset);
-                    numtk::vec3<uint8_t> const& source = palette[color_index];
-                    pixel_value[0] = (uint16_t)source[0];
-                    pixel_value[1] = (uint16_t)source[1];
-                    pixel_value[2] = (uint16_t)source[2];
-                    pixel_value[3] = (uint32_t)color_index >= palette_alpha.size()
-                        ? 255
-                        : (uint16_t)palette_alpha[color_index];
-                }
-
-                buffer[pixel_index++] = pixel_value;
-            }
+            std::copy(block, block+chunk_length,
+                      std::back_inserter(data_stream));
         }
 
         else if (CompareTag(tag_start, 'I', 'E', 'N', 'D'))
@@ -194,6 +175,114 @@ inline void LoadPNG(uint8_t const* _stream, size_t _size, PNGFile* _png_file)
         if (_stream - stream_start >= (ptrdiff_t)_size)
             break;
     }
+
+    {
+        uint8_t const* block = data_stream.data();
+
+        ziptk::ExtractZLib(block);
+        std::vector<uint8_t> block_data = ziptk::Inflate(block);
+
+        uint8_t const* block_stream = block_data.data();
+        uint32_t bit_offset = 0;
+
+        std::vector<uint8_t> filtered_scanline[2];
+        uint32_t scanline_byte_count = (header.bit_depth * header.width + 7) / 8;
+        filtered_scanline[0].resize(scanline_byte_count);
+        filtered_scanline[1].resize(scanline_byte_count);
+        uint8_t const* previous_scanline = nullptr;
+
+        for (uint32_t scanline_index = 0u; scanline_index < header.height; ++scanline_index)
+        {
+            if (block_stream - block_data.data() >= (ptrdiff_t)block_data.size())
+                break;
+
+            FilterMode filter = (FilterMode)bintk::UnpackBytesBE(1, block_stream);
+            uint8_t const* scanline = block_stream;
+            if ((filter == FilterMode_Up || filter == FilterMode_Average)
+                && !previous_scanline)
+                filter = (FilterMode)((uint32_t)filter & 1); // Up -> None, Average -> Sub
+
+            if (filter == FilterMode_Paeth)
+                std::cerr << "Unsupported filter" << std::endl;
+            else if (filter != FilterMode_None)
+            {
+                uint8_t* recon = filtered_scanline[scanline_index & 1].data();
+                scanline = recon;
+
+                std::memcpy(recon, block_stream, pixel_byte_stride);
+
+                for (uint32_t byte_index = pixel_byte_stride;
+                     byte_index < scanline_byte_count;
+                     ++byte_index)
+                {
+                    if (filter == FilterMode_Sub)
+                    {
+                        recon[byte_index] = block_stream[byte_index]
+                            + scanline[byte_index - pixel_byte_stride];
+                    }
+                    else if (filter == FilterMode_Up)
+                    {
+                        recon[byte_index] = block_stream[byte_index]
+                            + previous_scanline[byte_index];
+                    }
+                    else if (filter == FilterMode_Average)
+                    {
+                        recon[byte_index] = block_stream[byte_index]
+                            + (uint8_t)(
+                                ((uint16_t)scanline[byte_index - pixel_byte_stride]
+                                 + (uint16_t)previous_scanline[byte_index]) / 2);
+                    }
+                }
+            }
+
+            uint8_t const* current_byte = scanline;
+            for (uint32_t pixel_index = 0u; pixel_index < header.width; ++pixel_index)
+            {
+                numtk::vec4<uint16_t> pixel_value = {};
+                if (header.color_type != ColorType_Indexed)
+                {
+                    pixel_value[0] = (uint16_t)bintk::UnpackBitsBE(
+                        header.bit_depth, current_byte, bit_offset);
+
+                    if (header.color_type & ColorType_TruecolorBit)
+                    {
+                        pixel_value[1] = (uint16_t)bintk::UnpackBitsBE(
+                            header.bit_depth, current_byte, bit_offset);
+                        pixel_value[2] = (uint16_t)bintk::UnpackBitsBE(
+                            header.bit_depth, current_byte, bit_offset);
+                    }
+
+                    if (header.color_type & ColorType_AlphaBit)
+                    {
+                        pixel_value[3] = (uint16_t)bintk::UnpackBitsBE(
+                            header.bit_depth, current_byte, bit_offset);
+                    }
+                }
+                else
+                {
+                    uint8_t color_index = (uint8_t)bintk::UnpackBitsBE(
+                        header.bit_depth, current_byte, bit_offset);
+                    numtk::vec3<uint8_t> const& source = palette[color_index];
+                    pixel_value[0] = (uint16_t)source[0];
+                    pixel_value[1] = (uint16_t)source[1];
+                    pixel_value[2] = (uint16_t)source[2];
+                    pixel_value[3] = (uint32_t)color_index >= palette_alpha.size()
+                        ? 255
+                        : (uint16_t)palette_alpha[color_index];
+                }
+
+                buffer[scanline_index * header.width + pixel_index] = pixel_value;
+            }
+
+            block_stream += current_byte - scanline;
+            if (bit_offset)
+                block_stream++;
+            bit_offset = 0;
+
+            previous_scanline = scanline;
+        }
+    }
+
 
     if (_png_file)
     {
