@@ -228,6 +228,9 @@ std::vector<uint8_t> Inflate(std::uint8_t const* stream)
         }
         else
         {
+            HuffmannTable litlen_code = {};
+            HuffmannTable dist_code = {};
+
             if (BTYPE == BlockType::DynamicCodes)
             {
                 uint32_t HLIT = bintk::UnpackBits(5, stream, offset);
@@ -298,7 +301,7 @@ std::vector<uint8_t> Inflate(std::uint8_t const* stream)
                     litlen_code_lengths.resize(HLIT+257);
                 }
 
-                HuffmannTable litlen_code = GenerateHuffmannTable(litlen_code_lengths);
+                litlen_code = GenerateHuffmannTable(litlen_code_lengths);
 
                 while (entry_index < HDIST+HLIT+258)
                 {
@@ -340,54 +343,74 @@ std::vector<uint8_t> Inflate(std::uint8_t const* stream)
                     }
                 }
 
-                HuffmannTable dist_code = GenerateHuffmannTable(dist_code_lengths);
+                dist_code = GenerateHuffmannTable(dist_code_lengths);
+            }
 
-                for (;;)
+            else if (BTYPE == BlockType::FixedCodes)
+            {
+                std::vector<uint32_t> litlen_lengths = {};
+                litlen_lengths.reserve(288);
+                for (uint32_t index = 0; index < 144; ++index)
+                    litlen_lengths.push_back(8);
+                for (uint32_t index = 144; index < 256; ++index)
+                    litlen_lengths.push_back(9);
+                for (uint32_t index = 256; index < 280; ++index)
+                    litlen_lengths.push_back(7);
+                for (uint32_t index = 280; index < 288; ++index)
+                    litlen_lengths.push_back(8);
+                litlen_code = GenerateHuffmannTable(litlen_lengths);
+
+                std::vector<uint32_t> dist_lengths = {};
+                for (uint32_t index = 0; index < 32; ++index)
+                    dist_lengths.push_back(5);
+                dist_code = GenerateHuffmannTable(dist_lengths);
+            }
+
+            for (;;)
+            {
+                uint16_t stream_bits = bintk::ReverseBits(
+                    (uint16_t)bintk::PeekBits(16, stream, offset)
+                );
+                HuffmannTable::Entry const& litlen_entry = litlen_code.Lookup(stream_bits);
+                bintk::SkipBits(litlen_entry.size, stream, offset);
+
+                if (litlen_entry.value == 256)
+                    break;
+
+                if (litlen_entry.value < 256)
+                    output_stream.push_back(litlen_entry.value);
+                else
                 {
-                    uint16_t stream_bits = bintk::ReverseBits(
+                    uint32_t length = 0;
+                    {
+                        uint32_t const base = kLengthBase[litlen_entry.value - 257];
+                        uint32_t const extra_bits = kLengthExtraBits[litlen_entry.value - 257];
+                        length = base + bintk::UnpackBits(extra_bits, stream, offset);
+                    }
+
+                    stream_bits = bintk::ReverseBits(
                         (uint16_t)bintk::PeekBits(16, stream, offset)
                     );
-                    HuffmannTable::Entry const& litlen_entry = litlen_code.Lookup(stream_bits);
-                    bintk::SkipBits(litlen_entry.size, stream, offset);
+                    HuffmannTable::Entry const& dist_entry = dist_code.Lookup(stream_bits);
+                    bintk::SkipBits(dist_entry.size, stream, offset);
 
-                    if (litlen_entry.value == 256)
-                        break;
-
-                    if (litlen_entry.value < 256)
-                        output_stream.push_back(litlen_entry.value);
-                    else
+                    uint32_t distance = 0;
                     {
-                        uint32_t length = 0;
-                        {
-                            uint32_t const base = kLengthBase[litlen_entry.value - 257];
-                            uint32_t const extra_bits = kLengthExtraBits[litlen_entry.value - 257];
-                            length = base + bintk::UnpackBits(extra_bits, stream, offset);
-                        }
-
-                        stream_bits = bintk::ReverseBits(
-                            (uint16_t)bintk::PeekBits(16, stream, offset)
-                        );
-                        HuffmannTable::Entry const& dist_entry = dist_code.Lookup(stream_bits);
-                        bintk::SkipBits(dist_entry.size, stream, offset);
-
-                        uint32_t distance = 0;
-                        {
-                            uint32_t const base = kDistanceBase[dist_entry.value];
-                            uint32_t const extra_bits = kDistanceExtraBits[dist_entry.value];
-                            distance = base + bintk::UnpackBits(extra_bits, stream, offset);
-                        }
-
-                        uint32_t begin = output_stream.size()-distance;
-                        std::size_t old_size = output_stream.size();
-                        output_stream.resize(output_stream.size() + length);
-                        if ((begin+length) < old_size)
-                            std::memcpy(&output_stream[old_size], &output_stream[begin], length);
-                        else
-                            for (uint32_t byte_index = 0; byte_index < length; ++byte_index)
-                                output_stream[old_size+byte_index] =
-                                    output_stream[begin+byte_index];
-
+                        uint32_t const base = kDistanceBase[dist_entry.value];
+                        uint32_t const extra_bits = kDistanceExtraBits[dist_entry.value];
+                        distance = base + bintk::UnpackBits(extra_bits, stream, offset);
                     }
+
+                    uint32_t begin = output_stream.size()-distance;
+                    std::size_t old_size = output_stream.size();
+                    output_stream.resize(output_stream.size() + length);
+                    if ((begin+length) < old_size)
+                        std::memcpy(&output_stream[old_size], &output_stream[begin], length);
+                    else
+                        for (uint32_t byte_index = 0; byte_index < length; ++byte_index)
+                            output_stream[old_size+byte_index] =
+                                output_stream[begin+byte_index];
+
                 }
             }
         }
