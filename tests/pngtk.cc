@@ -22,6 +22,16 @@ std::vector<uint8_t> LoadFile(char const* _path)
     return memory;
 }
 
+void PrintColor(std::string const& blockid, numtk::vec4<float> const& accum)
+{
+    std::cout << "    " "{ " "\"" << blockid << "\"" ", "
+              << "numtk::vec3<int8_t>{ "
+              << "'\\x" << std::hex << (uint16_t)std::round(accum[0]) << "', "
+              << "'\\x" << std::hex << (uint16_t)std::round(accum[1]) << "', "
+              << "'\\x" << std::hex << (uint16_t)std::round(accum[2]) << "' }.cast<uint8_t>() },\n";
+    std::cout << std::dec;
+}
+
 void PrintFile(std::string const& file_path)
 {
     std::vector<uint8_t> memory = LoadFile(file_path.c_str());
@@ -53,12 +63,36 @@ void PrintFile(std::string const& file_path)
         blockid = blockid.substr(begin+1, end-begin-1);
     }
 
-    std::cout << "    " "{ " "\"" << blockid << "\"" ", "
-              << "numtk::vec3<int8_t>{ "
-              << "'\\x" << std::hex << (uint16_t)std::round(accum[0]) << "', "
-              << "'\\x" << std::hex << (uint16_t)std::round(accum[1]) << "', "
-              << "'\\x" << std::hex << (uint16_t)std::round(accum[2]) << "' }.cast<uint8_t>() },\n";
-    std::cout << std::dec;
+    if (blockid == "grass_block_top"
+        || blockid == "oak_leaves"
+        || blockid == "jungle_leaves"
+        || blockid == "acacia_leaves"
+        || blockid == "dark_oak_leaves"
+        || blockid == "vine")
+        accum = accum * numtk::vec4f{
+            (float)0x91 / (float)0xff,
+            (float)0xbd / (float)0xff,
+            (float)0x59 / (float)0xff,
+            1.f
+        };
+
+    if (blockid == "birch_leaves")
+        accum = accum * numtk::vec4f{
+            (float)0x80 / (float)0xff,
+            (float)0xa7 / (float)0xff,
+            (float)0x55 / (float)0xff
+        };
+
+    if (blockid == "spruce_leaves")
+        accum = accum * numtk::vec4f{
+            (float)0x6f / (float)0xff,
+            (float)0x99 / (float)0xff,
+            (float)0x61 / (float)0xff
+        };
+
+    PrintColor(blockid, accum);
+    if (blockid == "grass_block_top")
+        PrintColor("grass_block", accum);
 }
 
 int main(int argc, char const** argv)

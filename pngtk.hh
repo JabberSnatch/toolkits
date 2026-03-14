@@ -214,7 +214,7 @@ inline void LoadPNG(uint8_t const* _stream, size_t _size, PNGFile* _png_file)
                     uint32_t pixel_byte_stride)
                 {
                     int16_t a = (int16_t)(
-                        byte_index > pixel_byte_stride
+                        byte_index >= pixel_byte_stride
                         ? scanline[byte_index - pixel_byte_stride]
                         : (uint8_t)0);
 
@@ -224,7 +224,7 @@ inline void LoadPNG(uint8_t const* _stream, size_t _size, PNGFile* _png_file)
                         : (uint8_t)0);
 
                     int16_t c = (int16_t)(
-                        prev_scanline && byte_index > pixel_byte_stride
+                        prev_scanline && byte_index >= pixel_byte_stride
                         ? prev_scanline[byte_index - pixel_byte_stride]
                         : (uint8_t)0);
 
