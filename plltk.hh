@@ -22,6 +22,14 @@ struct Mutex
     }
 };
 
+struct ScopeLock
+{
+    ScopeLock(Mutex& mutex_) : mutex{ mutex_ } { mutex.Lock(); }
+    ~ScopeLock() { mutex.Unlock(); }
+
+    Mutex& mutex;
+};
+
 struct ConcurrentQueue
 {
     struct Node {
@@ -39,21 +47,38 @@ struct ConcurrentQueue
     std::atomic<Node*> tail_node = &root;
     std::atomic<uint32_t> tail_tag;
 
+    void Enqueue()
+    {
+        Node* candidate_node = ReserveNode_();
+        candidate_node->value;
+        candidate_node->next_node = nullptr;
 
-    Node* ReserveNode() {
-        uint64_t handle = next_free_node.fetch_add(1);
+        for(;;) {
+            Node* local_tail = tail_node;
+            Node* local_next = local_tail->next_node;
 
-        pool_mutex.Lock();
-        if (handle > node_pool.blocks.size() * node_pool.block_size)
-        {
+            if (local_tail == tail_node
+                && local_next->next_node == nullptr)
+            {
+            }
         }
-        pool_mutex.Unlock();
+    }
+
+    Node* ReserveNode_()
+    {
+        ScopeLock lock{ pool_mutex };
+        Node* node = node_pool[node_pool.Reserve()];
+        return node;
+    }
+
+    void ReleaseNode_(Node* node_)
+    {
+        ScopeLock lock{ pool_mutex };
+        node_pool.Release(node_pool.Find(node_));
     }
 
     Mutex pool_mutex{};
-    dstk::BlockVector node_pool{ sizeof(Node), 256ull };
-    std::atomic<uint64_t> pool_size = 0ull;
-    std::atomic<uint64_t> next_free_node = 0ull;
+    dstk::ObjectPool<Node> node_pool{};
 };
 
 } // namespace plltk
