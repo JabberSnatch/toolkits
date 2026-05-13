@@ -149,6 +149,9 @@ struct ObjectPool
     using Handle = uint64_t;
     static constexpr Handle kNullHandle = Handle(0);
 
+    ObjectPool() = default;
+    ObjectPool(uint64_t block_size) : items{ sizeof(T), block_size } {}
+
     void Expand(uint64_t required_size)
     {
         items.Expand(required_size);
