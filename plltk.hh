@@ -30,6 +30,76 @@ struct ScopeLock
     Mutex& mutex;
 };
 
+struct AtomicU128
+{
+    void Load(uint64_t* tgt_)
+    {
+        for (;;)
+        {
+            uint64_t local_high = high.load(std::memory_order_relaxed);
+            uint64_t local_low = low.load(std::memory_order_relaxed);
+            if (local_high != high.load(std::memory_order_relaxed))
+                continue;
+
+            tgt_[0] = local_low;
+            tgt_[1] = local_high;
+            break;
+        }
+    }
+
+    void Store(uint64_t const* src_)
+    {
+        for (;;)
+        {
+            uint64_t local[2];
+
+            local[1] = high.load(std::memory_order_relaxed);
+            local[0] = low.load(std::memory_order_relaxed);
+            if (local[1] != high.load(std::memory_order_acquire))
+                continue;
+
+            high.store(src_[1], std::memory_order_release);
+            if (src_[1] != high.load(std::memory_order_acquire))
+                continue;
+
+            low.store(src_[0], std::memory_order_release);
+            Load(local);
+            if (std::memcmp(local, src_, sizeof(uint64_t)*2) == 0)
+                break;
+        }
+    }
+
+    bool CompareExchange(uint64_t* expected_, uint64_t const* desired_)
+    {
+        for (;;)
+        {
+            uint64_t expected_copy[2] { expected_[0], expected_[1] };
+            if (!high.compare_exchange_weak(expected_copy[1], desired_[1]))
+                continue;
+
+            if (desired_[1] != high.load(std::memory_order_acquire))
+                continue;
+
+            if (!low.compare_exchange_weak(expected_copy[0], desired_[0]))
+                continue;
+
+            uint64_t local[2];
+            Load(local);
+            if (std::memcmp(local, desired_, 16) == 0)
+            {
+                expected_[0] = expected_copy[0];
+                expected_[1] = expected_copy[1];
+                break;
+            }
+        }
+
+        return true;
+    }
+
+    std::atomic<uint64_t> low;
+    std::atomic<uint64_t> high;
+};
+
 struct ConcurrentQueue
 {
     struct Cell;
@@ -46,14 +116,8 @@ struct ConcurrentQueue
         using ValueHandle = uint64_t;
 
         ValueHandle value = {};
-        //std::atomic<struct Cell*> next;
         std::atomic<CellID> next = {};
     };
-
-    //Node* root = { {}, nullptr };
-
-    //std::atomic<Cell*> head = new Cell({}, nullptr);
-    //std::atomic<Cell*> tail = head.load();
 
     std::atomic<CellID> head = CellID{ new Cell(), 0 };
     std::atomic<CellID> tail = head.load();

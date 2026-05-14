@@ -1,10 +1,19 @@
 #include "plltk.hh"
 
+#include <iostream>
 #include <thread>
 #include <vector>
 
 #define PRODUCER_COUNT 24
 #define CONSUMER_COUNT PRODUCER_COUNT
+
+void AtomicStressTest(plltk::AtomicU128& atomic, uint64_t thread_id)
+{
+    uint64_t value[2];
+    value[0] = thread_id;
+    value[1] = thread_id;
+    atomic.Store(value);
+}
 
 void ProducerThread(plltk::ConcurrentQueue& queue)
 {
@@ -21,6 +30,22 @@ void ConsumerThread(plltk::ConcurrentQueue& queue)
 int main(int argc, char const** argv)
 {
     plltk::ConcurrentQueue queue{};
+    plltk::AtomicU128 u128atomic{ 0ull, 0ull };
+
+    for (uint32_t test_index = 0; test_index < 1024; ++test_index)
+    {
+        std::vector<std::thread> atomics{};
+        for (uint64_t index = 1; index < 128; ++index)
+            atomics.emplace_back(&AtomicStressTest, std::ref(u128atomic), index);
+
+        for (auto&& thread : atomics)
+            if (thread.joinable())
+                thread.join();
+
+        if (u128atomic.high != u128atomic.low)
+            std::cout << "atomic corruption" << std::endl;
+    }
+    return 0;
 
     std::vector<std::thread> producers{};
     for (uint32_t index = 0; index < PRODUCER_COUNT; ++index)
