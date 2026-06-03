@@ -30,6 +30,7 @@ void ConsumerThread(plltk::ConcurrentQueue& queue)
 int main(int argc, char const** argv)
 {
     plltk::ConcurrentQueue queue{};
+#if 0
     plltk::AtomicU128 u128atomic{ 0ull, 0ull };
 
     for (uint32_t test_index = 0; test_index < 1024; ++test_index)
@@ -46,6 +47,7 @@ int main(int argc, char const** argv)
             std::cout << "atomic corruption" << std::endl;
     }
     return 0;
+#endif
 
     std::vector<std::thread> producers{};
     for (uint32_t index = 0; index < PRODUCER_COUNT; ++index)

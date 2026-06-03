@@ -104,6 +104,7 @@ struct ConcurrentQueue
 {
     struct Cell;
 
+#ifdef BIG_CELLID
     struct CellID {
         Cell* cell = nullptr;
         uint16_t tag = 0;
@@ -112,6 +113,20 @@ struct ConcurrentQueue
         bool operator!=(CellID const& o_) { return !(*this == o_); }
     };
 
+#else
+
+    using CellID = uint64_t;
+    static CellID CellID_Pack(Cell* cell, uint16_t tag) {
+        return (((CellID)cell) & 0xffffffffffffull) << 16 | (CellID)tag;
+    }
+    static Cell* CellID_Cell(CellID cellID) {
+        return (Cell*)(cellID >> 16);
+    }
+    static uint16_t CellID_Tag(CellID cellID) {
+        return (uint16_t)(cellID & 0xffffull);
+    }
+#endif
+
     struct Cell {
         using ValueHandle = uint64_t;
 
@@ -119,7 +134,12 @@ struct ConcurrentQueue
         std::atomic<CellID> next = {};
     };
 
+#ifdef BIG_CELLID
     std::atomic<CellID> head = CellID{ new Cell(), 0 };
+#else
+    std::atomic<CellID> head = CellID_Pack(new Cell(), 0);
+#endif
+
     std::atomic<CellID> tail = head.load();
 
     void Enqueue()
@@ -130,6 +150,8 @@ struct ConcurrentQueue
 
         for(;;) {
             CellID local_tail = tail;
+
+#ifdef BIG_CELLID
             CellID local_next = local_tail.cell->next;
 
             if (local_tail == tail
@@ -150,6 +172,28 @@ struct ConcurrentQueue
                         local_tail,
                         CellID{ local_next.cell, local_tail.tag+1u });
             }
+#else
+            CellID local_next = CellID_Cell(local_tail)->next;
+
+            if (local_tail == tail
+                && CellID_Cell(local_next) == nullptr)
+            {
+                if (CellID_Cell(local_tail)->next.compare_exchange_weak(
+                        local_next,
+                        CellID_Pack(candidate, CellID_Tag(local_next)+1u)))
+                {
+                    tail.compare_exchange_weak(
+                        local_tail,
+                        CellID_Pack(candidate, CellID_Tag(local_tail)+1u),
+                        std::memory_order_release, std::memory_order_relaxed);
+                    break;
+                }
+                else
+                    tail.compare_exchange_weak(
+                        local_tail,
+                        CellID_Pack(CellID_Cell(local_next), CellID_Tag(local_tail)+1u));
+            }
+#endif
         }
     }
 
@@ -160,6 +204,8 @@ struct ConcurrentQueue
         for (;;) {
             CellID local_head = head;
             CellID local_tail = tail;
+
+#ifdef BIG_CELLID
             CellID local_next = local_head.cell->next;
 
             if (local_head != head)
@@ -184,6 +230,33 @@ struct ConcurrentQueue
                     break;
                 }
             }
+#else
+            CellID local_next = CellID_Cell(local_head)->next;
+
+            if (local_head != head)
+                continue;
+
+            if (local_head == local_tail)
+            {
+                if (CellID_Cell(local_next) == nullptr)
+                    break;
+                tail.compare_exchange_weak(
+                    local_tail,
+                    CellID_Pack(CellID_Cell(local_next), CellID_Tag(local_tail)+1u));
+            }
+            else
+            {
+                output = CellID_Cell(local_next)->value;
+                if (head.compare_exchange_weak(
+                        local_head,
+                        CellID_Pack(CellID_Cell(local_next), CellID_Tag(local_head)+1u)))
+                {
+                    delete CellID_Cell(local_head);
+                    break;
+                }
+            }
+#endif
+
         }
 
         return output;
