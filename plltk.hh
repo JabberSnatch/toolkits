@@ -4,6 +4,9 @@
 
 #include <atomic>
 
+#define BIG_CELLID
+#define ATOMIC_REF
+
 namespace plltk
 {
 
@@ -30,84 +33,19 @@ struct ScopeLock
     Mutex& mutex;
 };
 
-struct AtomicU128
-{
-    void Load(uint64_t* tgt_)
-    {
-        for (;;)
-        {
-            uint64_t local_high = high.load(std::memory_order_relaxed);
-            uint64_t local_low = low.load(std::memory_order_relaxed);
-            if (local_high != high.load(std::memory_order_relaxed))
-                continue;
-
-            tgt_[0] = local_low;
-            tgt_[1] = local_high;
-            break;
-        }
-    }
-
-    void Store(uint64_t const* src_)
-    {
-        for (;;)
-        {
-            uint64_t local[2];
-
-            local[1] = high.load(std::memory_order_relaxed);
-            local[0] = low.load(std::memory_order_relaxed);
-            if (local[1] != high.load(std::memory_order_acquire))
-                continue;
-
-            high.store(src_[1], std::memory_order_release);
-            if (src_[1] != high.load(std::memory_order_acquire))
-                continue;
-
-            low.store(src_[0], std::memory_order_release);
-            Load(local);
-            if (std::memcmp(local, src_, sizeof(uint64_t)*2) == 0)
-                break;
-        }
-    }
-
-    bool CompareExchange(uint64_t* expected_, uint64_t const* desired_)
-    {
-        for (;;)
-        {
-            uint64_t expected_copy[2] { expected_[0], expected_[1] };
-            if (!high.compare_exchange_weak(expected_copy[1], desired_[1]))
-                continue;
-
-            if (desired_[1] != high.load(std::memory_order_acquire))
-                continue;
-
-            if (!low.compare_exchange_weak(expected_copy[0], desired_[0]))
-                continue;
-
-            uint64_t local[2];
-            Load(local);
-            if (std::memcmp(local, desired_, 16) == 0)
-            {
-                expected_[0] = expected_copy[0];
-                expected_[1] = expected_copy[1];
-                break;
-            }
-        }
-
-        return true;
-    }
-
-    std::atomic<uint64_t> low;
-    std::atomic<uint64_t> high;
-};
-
 struct ConcurrentQueue
 {
     struct Cell;
 
 #ifdef BIG_CELLID
     struct CellID {
-        Cell* cell = nullptr;
+        alignas(2 * sizeof(void*)) Cell* cell = nullptr;
+
+#ifndef ATOMIC_REF
         uint16_t tag = 0;
+#else
+        uint64_t tag = 0;
+#endif
 
         bool operator==(CellID const& o_) { return 0 == std::memcmp(this, &o_, sizeof(CellID)); }
         bool operator!=(CellID const& o_) { return !(*this == o_); }
@@ -135,12 +73,22 @@ struct ConcurrentQueue
     };
 
 #ifdef BIG_CELLID
+#ifndef ATOMIC_REF
     std::atomic<CellID> head = CellID{ new Cell(), 0 };
+#else
+    alignas(2 * sizeof(void*)) CellID head_storage = CellID{ new Cell(), 0 };
+    std::atomic_ref<CellID> head{ head_storage };
+#endif
 #else
     std::atomic<CellID> head = CellID_Pack(new Cell(), 0);
 #endif
 
+#ifndef ATOMIC_REF
     std::atomic<CellID> tail = head.load();
+#else
+    alignas(2 * sizeof(void*)) CellID tail_storage = head_storage;
+    std::atomic_ref<CellID> tail{ tail_storage };
+#endif
 
     void Enqueue()
     {
