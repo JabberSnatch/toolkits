@@ -3,6 +3,8 @@
 #include "numtk.hh"
 #include "dstk.hh"
 
+#define INLINE_PDEP
+
 namespace voxtk
 {
 
@@ -22,8 +24,31 @@ struct VoxelMask
     static VoxelMask FillBelow(numtk::vec3u const& end);
     static VoxelMask FillArea(numtk::vec3u const& begin, numtk::vec3u const& end);
 
+#ifndef INLINE_PDEP
     static uint16_t BitIndex(numtk::vec3u const& point);
     static numtk::vec3u PointLocation(uint16_t index);
+
+#else
+
+    inline static uint16_t BitIndex(numtk::vec3u const& point)
+    {
+        // 2 wide blocks of 4 wide blocks
+        // 1 bit for the toplevel, 2 bits for the bottomlevel
+        return (uint16_t)(
+            numtk::BitDeposit(point.x, 0b1000011) |
+            numtk::BitDeposit(point.y, 0b10001100) |
+            numtk::BitDeposit(point.z, 0b100110000));
+    }
+
+    inline static numtk::vec3u PointLocation(uint16_t index)
+    {
+        return numtk::vec3u{
+            numtk::BitExtract((uint32_t)index, 0b1000011),
+            numtk::BitExtract((uint32_t)index, 0b100011000),
+            numtk::BitExtract((uint32_t)index, 0b100110000)
+        };
+    }
+#endif
 
     VoxelMask& Clear();
     VoxelMask& BitReverse();
@@ -36,7 +61,20 @@ struct VoxelMask
 
     VoxelMask Shift(numtk::vec3i shift);
 
+#ifndef INLINE_PDEP
     bool Test(numtk::vec3u const& point) const;
+
+#else
+
+    inline bool Test(numtk::vec3u const& point) const
+    {
+        uint16_t bit_index = BitIndex(point);
+        uint16_t pack_index = bit_index / 64;
+        bit_index = bit_index & 63;
+        return !!((bits[pack_index] >> bit_index) & 1);
+    }
+#endif
+
     uint64_t ExtractKernel(numtk::vec3u const& base) const;
 
     VoxelMask& Set(numtk::vec3u const& point, bool v);
@@ -93,7 +131,7 @@ struct BinaryRegion
         VoxelMask child_mask{};
         VoxelMask data_mask{};
 #ifndef DENSE_CHILDREN_ARRAY
-        dstk::OrderedVector<uint16_t, Node*> children{};
+        dstk::FlatMap<uint16_t, Node*> children{};
 #else
         std::vector<Node*> children = std::vector<Node*>(VoxelMask::kVolume);
 #endif
@@ -660,6 +698,7 @@ VoxelMask VoxelMask::FillArea(numtk::vec3u const& begin, numtk::vec3u const& end
     return FillBelow(end).BitwiseAnd(FillAbove(begin));
 }
 
+#ifndef INLINE_PDEP
 uint16_t VoxelMask::BitIndex(numtk::vec3u const& point)
 {
     // 2 wide blocks of 4 wide blocks
@@ -678,6 +717,7 @@ numtk::vec3u VoxelMask::PointLocation(uint16_t index)
         numtk::BitExtract((uint32_t)index, 0b100110000)
     };
 }
+#endif
 
 VoxelMask& VoxelMask::Clear()
 {
@@ -883,6 +923,7 @@ VoxelMask VoxelMask::Shift(numtk::vec3i shift)
     return output;
 }
 
+#ifndef INLINE_PDEP
 bool VoxelMask::Test(numtk::vec3u const& point) const
 {
     uint16_t bit_index = BitIndex(point);
@@ -890,6 +931,7 @@ bool VoxelMask::Test(numtk::vec3u const& point) const
     bit_index = bit_index & 63;
     return !!((bits[pack_index] >> bit_index) & 1);
 }
+#endif
 
 uint64_t VoxelMask::ExtractKernel(numtk::vec3u const& base) const
 {
