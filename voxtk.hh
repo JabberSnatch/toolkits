@@ -137,7 +137,10 @@ struct BinaryRegion
 #endif
 
         numtk::bounds3u Bounds() const {
-            return { location * (1u << (3*(depth+1))), numtk::vec3u::Constant(VoxelMask::kSize) };
+            return numtk::bounds3u::MinExtent(
+                location * (1u << (3*(depth+1))),
+                numtk::vec3u::Constant(VoxelMask::kSize)
+            );
         }
         numtk::vec3u LocalPoint(numtk::vec3u const& _point) const {
             return (_point >> (3 * depth)) & VoxelMask::kSizeMask;
@@ -352,7 +355,7 @@ BinaryRegion::Set(numtk::vec3u const& _point, bool _v)
 void
 BinaryRegion::Set(numtk::bounds3u const& _bounds, bool _v)
 {
-    numtk::vec3u const set_end = _bounds.min + _bounds.extent;
+    numtk::vec3u const set_end = _bounds.max;
 
     std::vector<Node*> node_queue{ root };
     while (!node_queue.empty())
@@ -367,7 +370,7 @@ BinaryRegion::Set(numtk::bounds3u const& _bounds, bool _v)
             numtk::vec3u const data_begin =
                 numtk::max(_bounds.min, node_bounds.min) - node_bounds.min;
             numtk::vec3u const data_end =
-                numtk::min(set_end, node_bounds.min + node_bounds.extent) - node_bounds.min;
+                numtk::min(set_end, node_bounds.max) - node_bounds.min;
 
             current_node->data_mask.Set(data_begin, data_end, _v);
         }
@@ -379,7 +382,7 @@ BinaryRegion::Set(numtk::bounds3u const& _bounds, bool _v)
             numtk::vec3u const children_end =
                 numtk::min((set_end >> (3*(current_node->depth)))
                            + numtk::vec3u::Constant(1u),
-                           node_bounds.min + node_bounds.extent);
+                           node_bounds.max);
 
             for (uint32_t z = children_begin.z; z < children_end.z; ++z)
                 for (uint32_t y = children_begin.y; y < children_end.y; ++y)
@@ -449,7 +452,7 @@ BinaryRegion::Crop(numtk::bounds3u const& _bounds) const
 
     BinaryRegion shifted = Shift(-(_bounds.min.cast<int32_t>()));
 
-    BinaryRegion output{ _bounds.extent };
+    BinaryRegion output{ _bounds.extent() };
     numtk::vec3u const cell_extent = BinaryRegion::CellLocation(output.size + numtk::vec3u::Constant(VoxelMask::kSize-1));
     for (uint32_t cell_z = 0u; cell_z < cell_extent.z; ++cell_z)
         for (uint32_t cell_y = 0u; cell_y < cell_extent.y; ++cell_y)

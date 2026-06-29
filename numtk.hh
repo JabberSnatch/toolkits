@@ -373,12 +373,15 @@ template <typename scalar>
 struct bounds3
 {
     using PointType = vec3<scalar>;
-    PointType min;
-    PointType extent;
-    PointType max() const { return min+extent; }
+    static bounds3 MinExtent(PointType const& _min, PointType const& _extent) {
+        return bounds3{ _min, _min+_extent };
+    }
+
+    PointType min = PointType::Constant(std::numeric_limits<scalar>::max());
+    PointType max = PointType::Constant(std::numeric_limits<scalar>::min());
+    PointType extent() const { return max - min; }
 
     bool Contains(PointType const& point) const {
-        PointType max = min+extent;
         return point.x >= min.x && point.x < max.x
             && point.y >= min.y && point.y < max.y
             && point.z >= min.z && point.z < max.z;
@@ -387,16 +390,14 @@ struct bounds3
     bounds3 Intersection(bounds3 const& other) const {
         bounds3 output = {};
         output.min = numtk::max(min, other.min);
-        PointType max = numtk::min((min+extent), (other.min+other.extent));
-        output.extent = max - output.min;
+        output.max = numtk::min(max, other.max);
         return output;
     }
 
     bounds3 Expand(PointType const& point) const {
         bounds3 output = {};
-        output.min = numtk::max(min, point);
-        PointType max = numtk::min((min+extent), point);
-        output.extent = max - output.min;
+        output.min = numtk::min(min, point);
+        output.max = numtk::max(max, point);
         return output;
     }
 };
