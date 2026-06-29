@@ -161,6 +161,10 @@ struct BinaryRegion
     numtk::vec3u size;
     uint32_t level_count;
 
+    bool HasLayer(uint8_t _id) const {
+        return layers.count(_id);
+    }
+
     template <typename T>
     void DeclareLayer(uint8_t _id, T&& _default_value) {
         using DataType = std::remove_cvref<T>::type;
