@@ -157,10 +157,13 @@ struct ObjectPool
         items.Expand(required_size);
     }
 
-    Handle Reserve() {
+    Handle Reserve() { return Emplace(); }
+
+    template <typename ... Args>
+    Handle Emplace(Args&&... args) {
         uint64_t index = free_list.Reserve();
         items.Expand(free_list.RequiredSize());
-        new (items[index]) T{};
+        new (items[index]) T{ args... };
         return index+1;
     }
 
