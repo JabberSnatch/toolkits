@@ -253,9 +253,145 @@ struct BinaryRegion
     std::unordered_map<uint64_t, std::unique_ptr<uint8_t[]>> node_data{};
 };
 
+struct VoxelField
+{
+    VoxelField() {}
+
+    void Set(numtk::vec3i const& _point, bool _v);
+
+    struct Node {
+        static constexpr uint32_t kChildCount = VoxelMask::kVolume;
+
+        Node(Node* _parent, numtk::vec3i const& _target_point, uint32_t _depth = 0)
+            : depth{ _depth }
+            , parent{ _parent }
+        {
+            if (parent)
+            {
+                assert(parent->depth);
+                depth = parent->depth - 1;
+            }
+
+            point = _target_point >> (VoxelMask::kLogSize * (depth+1));
+
+            if (_parent)
+                _parent->BindChild(this);
+        }
+
+        numtk::vec3i Origin() const {
+            return point * (VoxelMask::kSize * (1u << (depth + 1)));
+        }
+
+        numtk::bounds3i Bounds() const {
+            return numtk::bounds3i::MinExtent(
+                Origin(),
+                numtk::vec3i::Constant(VoxelMask::kSize)
+            );
+        }
+
+        numtk::vec3u LocalPoint(numtk::vec3i const& _point) const {
+            return ((_point >> (VoxelMask::kLogSize * depth)) & VoxelMask::kSizeMask)
+                .cast<uint32_t>();
+        }
+
+        uint16_t ChildIndex(numtk::vec3u const& _child) const{
+            return VoxelMask::BitIndex(_child);
+        }
+
+        bool Contains(numtk::vec3i const& _point) const {
+            numtk::vec3i local_point = ((_point >> (VoxelMask::kLogSize * depth))
+                                        - point << VoxelMask::kLogSize);
+            return local_point.x >= 0 && local_point.x < VoxelMask::kSize
+                && local_point.y >= 0 && local_point.y < VoxelMask::kSize
+                && local_point.z >= 0 && local_point.z < VoxelMask::kSize;
+        }
+
+        void BindChild(Node* _child) {
+            assert(depth);
+            assert(Contains(_child->Origin()));
+            assert(_child->depth == depth-1);
+
+            children[ChildIndex(LocalPoint(_child->Origin()))] = _child;
+        }
+
+        uint32_t depth;
+        numtk::vec3i point;
+
+        VoxelMask child_mask{};
+        VoxelMask data_mask{};
+
+        Node const* parent;
+        std::vector<Node*> children = std::vector<Node*>(kChildCount);
+    };
+
+    Node* root = nullptr;
+    dstk::ObjectPool<Node> node_pool{};
+    numtk::bounds3i bounds;
+
+    bool Contains(numtk::vec3i const& _point) const { return bounds.Contains(_point); }
+    Node* InsertChild(Node* _parent, numtk::vec3i const& _global_point);
+    Node* EmplaceLeaf(numtk::vec3i const& _global_point);
+    Node* LookupNode(numtk::vec3i const& _global_point) const;
+};
+
 } // namespace voxtk
 
 #ifdef VOXTK_IMPLEMENTATION
+
+namespace voxtk
+{
+
+VoxelField::Node*
+VoxelField::InsertChild(VoxelField::Node* _parent, numtk::vec3i const& _global_point)
+{
+    VoxelField::Node* output = nullptr;
+
+    if (_parent || (_parent == root))
+        output = node_pool[node_pool.Emplace(_parent, _global_point)];
+    else if (root)
+    {
+        output = node_pool[node_pool.Emplace(_parent, _global_point, root->depth+1)];
+        output->BindChild(root);
+    }
+
+    if (!_parent)
+        root = output;
+
+    return output;
+}
+
+VoxelField::Node*
+VoxelField::EmplaceLeaf(numtk::vec3i const& _global_point)
+{
+    Node* current_node = LookupNode(_global_point);
+    while (!current_node || current_node->depth)
+        current_node = InsertChild(current_node, _global_point);
+    return current_node;
+}
+
+VoxelField::Node*
+VoxelField::LookupNode(numtk::vec3i const& _global_point) const
+{
+    if (!root
+        || !root->Contains(_global_point))
+        return nullptr;
+
+    Node* current_node = root;
+    while (current_node)
+    {
+        numtk::vec3u local_point = current_node->LocalPoint(_global_point);
+        if (!current_node->child_mask.Test(local_point))
+            break;
+        else {
+            uint16_t point_index = current_node->ChildIndex(local_point);
+            current_node = current_node->children[point_index];
+        }
+    }
+
+    return current_node;
+}
+
+} // namespace voxtk
 
 namespace voxtk
 {
