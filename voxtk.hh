@@ -77,6 +77,7 @@ struct VoxelMask
 
     uint64_t ExtractKernel(numtk::vec3u const& base) const;
 
+    VoxelMask& Set(uint16_t bit_index, bool v);
     VoxelMask& Set(numtk::vec3u const& point, bool v);
     VoxelMask& Set(numtk::vec3u const& begin, numtk::vec3u const& end, bool v);
 
@@ -261,9 +262,14 @@ struct VoxelField
 
     struct Node {
         static constexpr uint32_t kChildCount = VoxelMask::kVolume;
+        static numtk::vec3i AlignedBase(numtk::vec3i const& _target, uint32_t _depth) {
+            return _target & ~((1 << (VoxelMask::kLogSize * (_depth+1))) - 1);
+        }
 
-        Node(Node* _parent, numtk::vec3i const& _target_point, uint32_t _depth = 0)
+#if 0
+        Node(Node* _parent, numtk::vec3i const& _target_point, uint32_t _depth = 0, numtk::vec3u const& _offset = {})
             : depth{ _depth }
+            , offset{ _offset }
             , parent{ _parent }
         {
             if (parent)
@@ -278,19 +284,33 @@ struct VoxelField
                 _parent->BindChild(this);
         }
 
-        numtk::vec3i Origin() const {
-            return point * (VoxelMask::kSize * (1u << (depth + 1)));
+#else
+
+        Node(Node* _parent, numtk::vec3i const& _base, uint32_t _depth = 0, numtk::vec3u const& _offset = {})
+            : depth{ _depth }
+            , parent{ _parent }
+        {
+            point = _base >> (VoxelMask::kLogSize * (depth+1));
+            offset = (_base - Base()).cast<uint32_t>();
+
+            if (_parent)
+                _parent->BindChild(this);
+        }
+#endif
+
+        numtk::vec3i Base() const {
+            return point * (1u << (VoxelMask::kLogSize * (depth+1)));
         }
 
         numtk::bounds3i Bounds() const {
             return numtk::bounds3i::MinExtent(
-                Origin(),
-                numtk::vec3i::Constant(VoxelMask::kSize)
+                Base() + offset.cast<int32_t>(),
+                numtk::vec3i::Constant(1u << (VoxelMask::kLogSize * (depth+1)))
             );
         }
 
         numtk::vec3u LocalPoint(numtk::vec3i const& _point) const {
-            return ((_point >> (VoxelMask::kLogSize * depth)) & VoxelMask::kSizeMask)
+            return (((_point - offset.cast<int32_t>()) >> (VoxelMask::kLogSize * depth)) & VoxelMask::kSizeMask)
                 .cast<uint32_t>();
         }
 
@@ -299,23 +319,27 @@ struct VoxelField
         }
 
         bool Contains(numtk::vec3i const& _point) const {
-            numtk::vec3i local_point = ((_point >> (VoxelMask::kLogSize * depth))
-                                        - point << VoxelMask::kLogSize);
+            numtk::vec3i local_point = ((_point - offset.cast<int32_t>()) >> (VoxelMask::kLogSize * depth))
+                - (point << VoxelMask::kLogSize);
             return local_point.x >= 0 && local_point.x < VoxelMask::kSize
                 && local_point.y >= 0 && local_point.y < VoxelMask::kSize
                 && local_point.z >= 0 && local_point.z < VoxelMask::kSize;
         }
 
         void BindChild(Node* _child) {
+            assert(_child);
             assert(depth);
-            assert(Contains(_child->Origin()));
+            assert(Contains(_child->Base()));
             assert(_child->depth == depth-1);
 
-            children[ChildIndex(LocalPoint(_child->Origin()))] = _child;
+            uint16_t child_index = ChildIndex(LocalPoint(_child->Base()));
+            children[child_index] = _child;
+            child_mask.Set(child_index, true);
         }
 
         uint32_t depth;
         numtk::vec3i point;
+        numtk::vec3u offset;
 
         VoxelMask child_mask{};
         VoxelMask data_mask{};
@@ -345,12 +369,18 @@ VoxelField::Node*
 VoxelField::InsertChild(VoxelField::Node* _parent, numtk::vec3i const& _global_point)
 {
     VoxelField::Node* output = nullptr;
+    uint32_t depth = _parent ? _parent->depth-1 : 0;
 
     if (_parent || (_parent == root))
-        output = node_pool[node_pool.Emplace(_parent, _global_point)];
+        output = node_pool[node_pool.Emplace(_parent,
+                                             Node::AlignedBase(_global_point, depth),
+                                             depth)];
     else if (root)
     {
-        output = node_pool[node_pool.Emplace(_parent, _global_point, root->depth+1)];
+        numtk::vec3i root_begin = numtk::min(_global_point, root->Base());
+        output = node_pool[node_pool.Emplace(_parent,
+                                             root_begin,
+                                             root->depth+1)];
         output->BindChild(root);
     }
 
@@ -366,6 +396,7 @@ VoxelField::EmplaceLeaf(numtk::vec3i const& _global_point)
     Node* current_node = LookupNode(_global_point);
     while (!current_node || current_node->depth)
         current_node = InsertChild(current_node, _global_point);
+    bounds = bounds.Expand(current_node->Bounds());
     return current_node;
 }
 
@@ -1082,9 +1113,8 @@ uint64_t VoxelMask::ExtractKernel(numtk::vec3u const& base) const
     return bits[pack_index];
 }
 
-VoxelMask& VoxelMask::Set(numtk::vec3u const& point, bool v)
+VoxelMask& VoxelMask::Set(uint16_t bit_index, bool v)
 {
-    uint16_t bit_index = BitIndex(point);
     uint16_t pack_index = bit_index / 64;
     bit_index = bit_index & 63;
 
@@ -1094,6 +1124,12 @@ VoxelMask& VoxelMask::Set(numtk::vec3u const& point, bool v)
         bits[pack_index] &= ~(1ull << bit_index);
 
     return *this;
+}
+
+VoxelMask& VoxelMask::Set(numtk::vec3u const& point, bool v)
+{
+    uint16_t bit_index = BitIndex(point);
+    return Set(bit_index, v);
 }
 
 VoxelMask& VoxelMask::Set(numtk::vec3u const& begin, numtk::vec3u const& end, bool v)
