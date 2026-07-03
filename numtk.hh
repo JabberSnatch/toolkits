@@ -404,6 +404,13 @@ struct bounds3
         output.max = numtk::max(max, point);
         return output;
     }
+
+    bounds3 Expand(bounds3 const& other) const {
+        bounds3 output = {};
+        output.min = numtk::min(min, other.min);
+        output.max = numtk::max(max, other.max);
+        return output;
+    }
 };
 
 using vec2f = vec2<float>;
