@@ -3,9 +3,42 @@
 
 int main(int argc, char const** argv)
 {
-    voxtk::VoxelField test_field = {};
-    test_field.EmplaceLeaf({ -1, -1, -1 });
-    test_field.EmplaceLeaf({ 1, 1, 1 });
-    test_field.EmplaceLeaf({ -9, -9, -9 });
+    {
+        voxtk::VoxelField test_field = {};
+        test_field.EmplaceLeaf({ -1, -1, -1 });
+        test_field.EmplaceLeaf({ 1, 1, 1 });
+
+        for (uint32_t index = 1; index < 6; ++index)
+        {
+            int32_t offset = -(1 << (voxtk::VoxelMask::kLogSize * index));
+            voxtk::VoxelField::Node const* leaf0 =
+                test_field.EmplaceLeaf(numtk::vec3i::Constant(offset-1));
+            voxtk::VoxelField::Node const* leaf1 =
+                test_field.EmplaceLeaf(numtk::vec3i::Constant(offset*2-1));
+        }
+
+        test_field;
+    }
+
+    {
+        voxtk::VoxelField test_field = {};
+        test_field.EmplaceLeaf({ 0, 0, 0 });
+        test_field.EmplaceLeaf({ -1, -1, -1 });
+        test_field.EmplaceLeaf({ 4095, 4095, 4095 });
+
+        test_field;
+    }
+
+    {
+        voxtk::VoxelField test_field = {};
+        test_field.EmplaceLeaf({ 0, 0, 0 });
+        test_field.EmplaceLeaf({ 511, 511, 511 });
+        test_field.EmplaceLeaf({ -512, -512, -512 });
+        test_field.EmplaceLeaf({ 4095, 4095, 4095 });
+        test_field.EmplaceLeaf({ -262144, -262144, -262144 });
+
+        test_field;
+    }
+
     return 0;
 }
