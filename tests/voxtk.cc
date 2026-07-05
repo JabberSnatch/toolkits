@@ -31,6 +31,15 @@ int main(int argc, char const** argv)
 
     {
         voxtk::VoxelField test_field = {};
+        test_field.EmplaceLeaf({ -1, -1, -1 });
+        test_field.EmplaceLeaf({ 16, 16, 16 });
+        test_field.EmplaceLeaf({ -4096, -4096, -4096 });
+
+        test_field;
+    }
+
+    {
+        voxtk::VoxelField test_field = {};
         test_field.EmplaceLeaf({ 0, 0, 0 });
         test_field.EmplaceLeaf({ 511, 511, 511 });
         test_field.EmplaceLeaf({ -512, -512, -512 });
