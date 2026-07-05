@@ -5,6 +5,19 @@ int main(int argc, char const** argv)
 {
     {
         voxtk::VoxelField test_field = {};
+        test_field.Set({ 1, 1, 1 }, true);
+        test_field.Set({ -1, -1, -1 }, true);
+        test_field.Set({ 4095, 4095, 4095 }, true);
+
+        test_field.Test({ 1, 1, 1 });
+        test_field.Test({ 16, 16, 16 });
+        test_field.Test({ 4095, 4095, 4095 });
+
+        test_field;
+    }
+
+    {
+        voxtk::VoxelField test_field = {};
         test_field.EmplaceLeaf({ -1, -1, -1 });
         test_field.EmplaceLeaf({ 1, 1, 1 });
 

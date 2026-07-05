@@ -263,6 +263,7 @@ struct VoxelField
     VoxelField() {}
 
     void Set(numtk::vec3i const& _point, bool _v);
+    bool Test(numtk::vec3i const& _point) const;
 
     struct Node {
         static constexpr uint32_t kChildCount = VoxelMask::kVolume;
@@ -366,6 +367,23 @@ struct VoxelField
 
 namespace voxtk
 {
+
+void
+VoxelField::Set(numtk::vec3i const& _point, bool _v)
+{
+    Node* current_node = LookupNode(_point);
+    if (!current_node || current_node->depth)
+        current_node = EmplaceLeaf(_point);
+    assert(current_node->depth == 0);
+    current_node->data_mask.Set(current_node->LocalPoint(_point), _v);
+}
+
+bool
+VoxelField::Test(numtk::vec3i const& _point) const
+{
+    Node* current_node = LookupNode(_point);
+    return current_node && current_node->data_mask.Test(current_node->LocalPoint(_point));
+}
 
 VoxelField::Node*
 VoxelField::EmplaceLeaf(numtk::vec3i const& _global_point)
