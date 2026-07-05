@@ -281,6 +281,13 @@ struct VoxelField
             );
         }
 
+        static numtk::bounds3i AlignedBounds(numtk::bounds3i const& _target, uint32_t _depth) {
+            return numtk::bounds3i{
+                AlignedBase(_target.min, _depth),
+                AlignedBase(_target.max + numtk::vec3i::Constant(DepthSize(_depth)-1), _depth)
+            };
+        }
+
 #if 0
         Node(Node* _parent, numtk::vec3i const& _target_point, uint32_t _depth = 0, numtk::vec3u const& _offset = {})
             : depth{ _depth }
@@ -414,15 +421,78 @@ VoxelField::EmplaceLeaf(numtk::vec3i const& _global_point)
     Node* current_node = LookupNode(_global_point);
     if (!current_node && root)
     {
-        numtk::bounds3i aligned_bounds = Node::AlignedBounds(_global_point, root->depth-1);
+        //numtk::bounds3i aligned_bounds = Node::AlignedBounds(_global_point, root->depth-1);
+        numtk::bounds3i aligned_bounds = Node::AlignedBounds(_global_point, root->depth);
         numtk::bounds3i expanded_bounds = bounds.Expand(aligned_bounds);
         numtk::vec3i extent = expanded_bounds.extent();
         uint32_t node_size = Node::DepthSize(root->depth);
 
-        if (extent.x <= node_size
-            && extent.y <= node_size
-            && extent.z <= node_size)
+        while (!(extent.x <= node_size
+                 && extent.y <= node_size
+                 && extent.z <= node_size))
         {
+            if (root->offset == numtk::vec3u::Constant(0))
+            {
+                Node* next = node_pool[node_pool.Emplace(
+                        nullptr,
+                        Node::AlignedBase(root->point, root->depth+1),
+                        root->depth+1)];
+                next->BindChild(root);
+                root = next;
+            }
+            else
+            {
+                aligned_bounds = Node::AlignedBounds(_global_point, root->depth);
+                expanded_bounds = bounds.Expand(aligned_bounds);
+
+                Node tmp = std::move(*root);
+                *root = Node{
+                    nullptr,
+                    Node::AlignedBase(expanded_bounds.min, root->depth),
+                    root->depth+1
+                };
+
+                for (Node* child : tmp.children)
+                {
+                    if (!child) continue;
+                    assert(child->offset == numtk::vec3u::Constant(0));
+
+                    Node* parent = root;
+                    numtk::vec3i child_base = child->Base();
+                    while (parent->depth > child->depth+1)
+                    {
+                        uint32_t depth = parent->depth-1;
+                        numtk::vec3u local_point = parent->LocalPoint(child_base);
+                        uint16_t child_index = parent->ChildIndex(local_point);
+                        if (!parent->child_mask.Test(child_index))
+                        {
+                            Node* next = node_pool[node_pool.Emplace(
+                                    parent,
+                                    Node::AlignedBase(child_base, depth),
+                                    depth)];
+                            parent = next;
+                        }
+                        else
+                            parent = parent->children[child_index];
+                    }
+
+                    parent->BindChild(child);
+                }
+            }
+
+            node_size = Node::DepthSize(root->depth);
+        }
+
+        aligned_bounds = Node::AlignedBounds(_global_point, root->depth-1);
+        expanded_bounds = Node::AlignedBounds(bounds.Expand(aligned_bounds), root->depth-1);
+        extent = expanded_bounds.extent();
+        assert(extent.x <= node_size
+               && extent.y <= node_size
+               && extent.z <= node_size);
+
+        {
+            assert(root->depth);
+
             // Root can take new node in, only needs to be shifted
             Node tmp = std::move(*root);
             *root = Node{ nullptr, expanded_bounds.min, root->depth };
@@ -433,52 +503,110 @@ VoxelField::EmplaceLeaf(numtk::vec3i const& _global_point)
             current_node = root;
         }
 
-        else if (root->offset != numtk::vec3u::Constant(0))
-        {
-            aligned_bounds = Node::AlignedBounds(_global_point, root->depth);
-            expanded_bounds = bounds.Expand(aligned_bounds);
-            node_size = Node::DepthSize(root->depth+1);
+        current_node = LookupNode(_global_point);
+        assert(current_node && current_node->depth);
 
-            Node tmp = std::move(*root);
-            *root = Node{
-                nullptr,
-                Node::AlignedBase(expanded_bounds.min, root->depth),
-                root->depth+1
-            };
-
-            for (Node* child : tmp.children)
-            {
-                if (!child) continue;
-                assert(child->offset == numtk::vec3u::Constant(0));
-
-                Node* parent = root;
-                numtk::vec3i child_base = child->Base();
-                while (parent->depth > child->depth+1)
-                {
-                    uint32_t depth = parent->depth-1;
-                    numtk::vec3u local_point = parent->LocalPoint(child_base);
-                    uint16_t child_index = parent->ChildIndex(local_point);
-                    if (!parent->child_mask.Test(child_index))
-                    {
-                        Node* next = node_pool[node_pool.Emplace(
-                                parent,
-                                Node::AlignedBase(child_base, depth),
-                                depth)];
-                        parent = next;
-                    }
-                    else
-                        parent = parent->children[child_index];
-                }
-
-                parent->BindChild(child);
-            }
-
-            current_node = LookupNode(_global_point);
-            assert(current_node && current_node->depth);
-        }
-
+#if 0
         else
         {
+            //node_size = Node::DepthSize(root->depth+1);
+            while (!(extent.x <= node_size
+                     && extent.y <= node_size
+                     && extent.z <= node_size))
+            {
+                if (root->offset == numtk::vec3u::Constant(0))
+                {
+                    Node* next = node_pool[node_pool.Emplace(
+                            nullptr,
+                            Node::AlignedBase(root->point, root->depth+1),
+                            root->depth+1)];
+                    next->BindChild(root);
+                    root = next;
+                }
+                else
+                {
+                    aligned_bounds = Node::AlignedBounds(_global_point, root->depth);
+                    expanded_bounds = bounds.Expand(aligned_bounds);
+
+                    Node tmp = std::move(*root);
+                    *root = Node{
+                        nullptr,
+                        Node::AlignedBase(expanded_bounds.min, root->depth),
+                        root->depth+1
+                    };
+
+                    for (Node* child : tmp.children)
+                    {
+                        if (!child) continue;
+                        assert(child->offset == numtk::vec3u::Constant(0));
+
+                        Node* parent = root;
+                        numtk::vec3i child_base = child->Base();
+                        while (parent->depth > child->depth+1)
+                        {
+                            uint32_t depth = parent->depth-1;
+                            numtk::vec3u local_point = parent->LocalPoint(child_base);
+                            uint16_t child_index = parent->ChildIndex(local_point);
+                            if (!parent->child_mask.Test(child_index))
+                            {
+                                Node* next = node_pool[node_pool.Emplace(
+                                        parent,
+                                        Node::AlignedBase(child_base, depth),
+                                        depth)];
+                                parent = next;
+                            }
+                            else
+                                parent = parent->children[child_index];
+                        }
+
+                        parent->BindChild(child);
+                    }
+                }
+
+                node_size = Node::DepthSize(root->depth);
+            }
+
+#if 0
+            if (root->offset != numtk::vec3u::Constant(0))
+            {
+                aligned_bounds = Node::AlignedBounds(_global_point, root->depth);
+                expanded_bounds = bounds.Expand(aligned_bounds);
+
+                Node tmp = std::move(*root);
+                *root = Node{
+                    nullptr,
+                    Node::AlignedBase(expanded_bounds.min, root->depth),
+                    root->depth+1
+                };
+
+                for (Node* child : tmp.children)
+                {
+                    if (!child) continue;
+                    assert(child->offset == numtk::vec3u::Constant(0));
+
+                    Node* parent = root;
+                    numtk::vec3i child_base = child->Base();
+                    while (parent->depth > child->depth+1)
+                    {
+                        uint32_t depth = parent->depth-1;
+                        numtk::vec3u local_point = parent->LocalPoint(child_base);
+                        uint16_t child_index = parent->ChildIndex(local_point);
+                        if (!parent->child_mask.Test(child_index))
+                        {
+                            Node* next = node_pool[node_pool.Emplace(
+                                    parent,
+                                    Node::AlignedBase(child_base, depth),
+                                    depth)];
+                            parent = next;
+                        }
+                        else
+                            parent = parent->children[child_index];
+                    }
+
+                    parent->BindChild(child);
+                }
+            }
+
             node_size = Node::DepthSize(root->depth+1);
             while (!(extent.x <= node_size
                      && extent.y <= node_size
@@ -492,7 +620,12 @@ VoxelField::EmplaceLeaf(numtk::vec3i const& _global_point)
                 root = next;
                 node_size = Node::DepthSize(root->depth+1);
             }
+#endif
+
+            current_node = LookupNode(_global_point);
+            assert(!current_node || current_node->depth);
         }
+#endif
     }
 
     while (!current_node || current_node->depth)
