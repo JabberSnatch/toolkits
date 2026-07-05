@@ -356,7 +356,6 @@ struct VoxelField
     numtk::bounds3i bounds;
 
     bool Contains(numtk::vec3i const& _point) const { return bounds.Contains(_point); }
-    Node* InsertChild(Node* _parent, numtk::vec3i const& _global_point);
     Node* EmplaceLeaf(numtk::vec3i const& _global_point);
     Node* LookupNode(numtk::vec3i const& _global_point) const;
 };
@@ -369,37 +368,20 @@ namespace voxtk
 {
 
 VoxelField::Node*
-VoxelField::InsertChild(VoxelField::Node* _parent, numtk::vec3i const& _global_point)
-{
-    VoxelField::Node* output = nullptr;
-
-    if (_parent || (_parent == root))
-    {
-        uint32_t depth = _parent ? _parent->depth-1 : 0;
-        output = node_pool[node_pool.Emplace(_parent,
-                                             Node::AlignedBase(_global_point, depth),
-                                             depth)];
-    }
-    else if (root)
-    {
-        numtk::vec3i root_begin = numtk::min(_global_point, root->Base());
-        output = node_pool[node_pool.Emplace(_parent,
-                                             Node::AlignedBase(root_begin, root->depth),
-                                             root->depth+1)];
-        output->BindChild(root);
-    }
-
-    if (!_parent)
-        root = output;
-
-    return output;
-}
-
-VoxelField::Node*
 VoxelField::EmplaceLeaf(numtk::vec3i const& _global_point)
 {
+    if (!root)
+    {
+        root = node_pool[node_pool.Emplace(
+                nullptr,
+                Node::AlignedBase(_global_point, 0),
+                0u)];
+        bounds = root->Bounds();
+        return root;
+    }
+
     Node* current_node = LookupNode(_global_point);
-    if (!current_node && root)
+    if (!current_node)
     {
         numtk::bounds3i aligned_bounds = Node::AlignedBounds(_global_point, root->depth);
         numtk::bounds3i expanded_bounds = bounds.Expand(aligned_bounds);
@@ -490,8 +472,14 @@ VoxelField::EmplaceLeaf(numtk::vec3i const& _global_point)
         assert(current_node && current_node->depth);
     }
 
-    while (!current_node || current_node->depth)
-        current_node = InsertChild(current_node, _global_point);
+    while (current_node->depth)
+    {
+        uint32_t depth = current_node->depth-1;
+        current_node = node_pool[node_pool.Emplace(
+                current_node,
+                Node::AlignedBase(_global_point, depth),
+                depth)];
+    }
 
     bounds = bounds.Expand(current_node->Bounds());
     return current_node;
