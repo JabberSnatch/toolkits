@@ -320,7 +320,8 @@ struct VoxelField
         }
 
         bool Contains(numtk::vec3i const& _point) const {
-            numtk::vec3i local_point = ((_point - offset.cast<int32_t>()) >> (VoxelMask::kLogSize * depth))
+            numtk::vec3i local_point =
+                ((_point - offset.cast<int32_t>()) >> (VoxelMask::kLogSize * depth))
                 - (point << VoxelMask::kLogSize);
             return local_point.x >= 0 && local_point.x < VoxelMask::kSize
                 && local_point.y >= 0 && local_point.y < VoxelMask::kSize
@@ -416,7 +417,7 @@ VoxelField::EmplaceLeaf(numtk::vec3i const& _global_point)
                 // Aligned case is only a matter of inserting root into its new parent
                 Node* next = node_pool[node_pool.Emplace(
                         nullptr,
-                        Node::AlignedBase(root->point, root->depth+1),
+                        Node::AlignedBase(root->Base(), root->depth+1),
                         root->depth+1)];
                 next->BindChild(root);
                 root = next;
