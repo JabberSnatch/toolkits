@@ -263,12 +263,21 @@ struct VoxelField
     VoxelField() {}
 
     void Set(numtk::vec3i const& _point, bool _v);
+    void SetVolume(numtk::bounds3i const& _bounds, bool _v);
     bool Test(numtk::vec3i const& _point) const;
 
     struct Node {
         static constexpr uint32_t kChildCount = VoxelMask::kVolume;
         static uint32_t DepthSize(uint32_t _depth) {
             return 1u << (VoxelMask::kLogSize * (_depth+1));
+        }
+
+        static numtk::vec3i DepthMap(numtk::vec3i const& _target, uint32_t _depth) {
+            return _target >> (VoxelMask::kLogSize * _depth);
+        }
+
+        static numtk::vec3i DepthInvMap(numtk::vec3i const& _target, uint32_t _depth) {
+            return _target << (VoxelMask::kLogSize * _depth);
         }
 
         static numtk::vec3i AlignedBase(numtk::vec3i const& _target, uint32_t _depth) {
@@ -293,7 +302,7 @@ struct VoxelField
             : depth{ _depth }
             , parent{ _parent }
         {
-            point = _base >> (VoxelMask::kLogSize * (depth+1));
+            point = DepthMap(_base, depth+1);
             offset = (_base - Base()).cast<uint32_t>();
 
             if (_parent)
@@ -312,7 +321,8 @@ struct VoxelField
         }
 
         numtk::vec3u LocalPoint(numtk::vec3i const& _point) const {
-            return (((_point - offset.cast<int32_t>()) >> (VoxelMask::kLogSize * depth)) & VoxelMask::kSizeMask)
+            return (DepthMap(_point - offset.cast<int32_t>(), depth)
+                    & VoxelMask::kSizeMask)
                 .cast<uint32_t>();
         }
 
@@ -322,7 +332,7 @@ struct VoxelField
 
         bool Contains(numtk::vec3i const& _point) const {
             numtk::vec3i local_point =
-                ((_point - offset.cast<int32_t>()) >> (VoxelMask::kLogSize * depth))
+                DepthMap(_point - offset.cast<int32_t>(), depth)
                 - (point << VoxelMask::kLogSize);
             return local_point.x >= 0 && local_point.x < VoxelMask::kSize
                 && local_point.y >= 0 && local_point.y < VoxelMask::kSize
@@ -374,10 +384,88 @@ void
 VoxelField::Set(numtk::vec3i const& _point, bool _v)
 {
     Node* current_node = LookupNode(_point);
-    if (!current_node || current_node->depth)
+
+    if (!current_node || current_node->depth
+        || current_node->data_mask.Test(current_node->LocalPoint(_point)) != _v)
         current_node = EmplaceLeaf(_point);
-    assert(current_node->depth == 0);
-    current_node->data_mask.Set(current_node->LocalPoint(_point), _v);
+
+    if(current_node->depth == 0)
+        current_node->data_mask.Set(current_node->LocalPoint(_point), _v);
+}
+
+void
+VoxelField::SetVolume(numtk::bounds3i const& _bounds, bool _v)
+{
+    if (!root)
+    {
+        root = node_pool[node_pool.Emplace(
+                nullptr,
+                Node::AlignedBase(_bounds.min, 0),
+                0u)];
+        bounds = root->Bounds();
+    }
+
+    if (!root->Contains(_bounds.min) || !root->Contains(_bounds.max - numtk::vec3i::Constant(1)))
+        RelocateRoot(_bounds);
+
+    std::vector<Node*> node_queue{ root };
+    while (!node_queue.empty())
+    {
+        Node* current_node = node_queue.back();
+        node_queue.pop_back();
+
+        numtk::bounds3i const node_bounds = current_node->Bounds();
+
+        if (!current_node->depth)
+        {
+            numtk::vec3u const data_begin =
+                (numtk::max(_bounds.min, node_bounds.min) - node_bounds.min).cast<uint32_t>();
+            numtk::vec3u const data_end =
+                (numtk::min(_bounds.max, node_bounds.max) - node_bounds.min).cast<uint32_t>();
+            current_node->data_mask.Set(data_begin, data_end, _v);
+        }
+
+        else
+        {
+            numtk::vec3i bounds_min = Node::DepthMap(_bounds.min, current_node->depth);
+            numtk::vec3i node_min = Node::DepthMap(node_bounds.min, current_node->depth);
+            numtk::vec3i bounds_max =
+                Node::DepthMap(_bounds.max
+                               + numtk::vec3i::Constant(Node::DepthSize(current_node->depth-1) - 1)
+                               , current_node->depth);
+            numtk::vec3i node_max = Node::DepthMap(node_bounds.max, current_node->depth);
+
+            numtk::vec3u const children_begin =
+                (numtk::max(bounds_min, node_min) - node_min)
+                .cast<uint32_t>();
+            numtk::vec3u const children_end =
+                (numtk::min(bounds_max, node_max) - node_min)
+                .cast<uint32_t>();
+
+            for (uint32_t z = children_begin.z; z < children_end.z; ++z)
+                for (uint32_t y = children_begin.y; y < children_end.y; ++y)
+                    for (uint32_t x = children_begin.x; x < children_end.x; ++x)
+                    {
+                        numtk::vec3u const child{ x, y, z };
+                        uint16_t child_index = current_node->ChildIndex(child);
+
+                        if (!current_node->child_mask.Test(child))
+                        {
+                            numtk::vec3i const child_begin = Node::DepthInvMap(
+                                child.cast<int32_t>() + node_min,
+                                current_node->depth
+                            );
+                            current_node->children[child_index] =
+                                node_pool[node_pool.Emplace(
+                                    current_node,
+                                    child_begin,
+                                    current_node->depth-1)];
+                        }
+
+                        node_queue.push_back(current_node->children[child_index]);
+                    }
+        }
+    }
 }
 
 bool

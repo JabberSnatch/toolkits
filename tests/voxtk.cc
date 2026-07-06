@@ -5,6 +5,16 @@ int main(int argc, char const** argv)
 {
     {
         voxtk::VoxelField test_field = {};
+        test_field.Set({ 0, 0, 0 }, true);
+        test_field.Set({ 32, 32, 32 }, true);
+        test_field.SetVolume({{ -16, -16, -16 }, { 16, 16, 16 }}, true );
+        test_field.SetVolume({{ -15, -15, -15 }, { 15, 15, 15 }}, true );
+
+        test_field;
+    }
+
+    {
+        voxtk::VoxelField test_field = {};
         test_field.Set({ 1, 1, 1 }, true);
         test_field.Set({ -1, -1, -1 }, true);
         test_field.Set({ 4095, 4095, 4095 }, true);
