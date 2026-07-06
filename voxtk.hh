@@ -167,6 +167,7 @@ struct BinaryRegion
     Node* root = nullptr;
     dstk::ObjectPool<Node> node_pool{};
     numtk::vec3u size;
+    numtk::vec3u Size() const { return size; }
     uint32_t level_count;
 
     bool HasLayer(uint8_t _id) const {
@@ -265,6 +266,7 @@ struct VoxelField
     void Set(numtk::vec3i const& _point, bool _v);
     void SetVolume(numtk::bounds3i const& _bounds, bool _v);
     bool Test(numtk::vec3i const& _point) const;
+    uint64_t TestKernel(numtk::vec3i const& _point) const;
 
     struct Node {
         static constexpr uint32_t kChildCount = VoxelMask::kVolume;
@@ -366,11 +368,133 @@ struct VoxelField
     dstk::ObjectPool<Node> node_pool{};
     numtk::bounds3i bounds;
 
-    bool Contains(numtk::vec3i const& _point) const { return bounds.Contains(_point); }
     Node* EmplaceLeaf(numtk::vec3i const& _global_point);
     Node* LookupNode(numtk::vec3i const& _global_point) const;
+    template <typename T> void RelocateRoot(T const& _global_bounds);
+
+    // =========================================================================
+    // DATA LAYERS
+    // =========================================================================
+    bool HasLayer(uint8_t _id) const {
+        return layers.count(_id);
+    }
+
     template <typename T>
-    void RelocateRoot(T const& _global_bounds);
+    void DeclareLayer(uint8_t _id, T&& _default_value) {
+        using DataType = std::remove_cvref<T>::type;
+
+        static auto const PayloadDtor = [](void* ptr) {
+            ((DataType*)ptr)->~DataType();
+        };
+        static auto const PayloadCopy = [](void* dst, void const* src) {
+            *(DataType*)dst = *(DataType const*)src;
+        };
+
+        if (layers.count(_id))
+            return;
+
+        auto layer_it = layers.emplace(_id, DataLayer{
+            sizeof(DataType), {}, PayloadDtor, PayloadCopy
+        });
+        layer_it.first->second.default_value.reset(new uint8_t[sizeof(DataType)]);
+        *(DataType*)layer_it.first->second.default_value.get() = _default_value;
+    }
+
+    template <typename T>
+    void StoreData(numtk::vec3i const& _point, uint8_t _id, T&& _data) {
+        using DataType = std::remove_cvref<T>::type;
+        Set(_point, true);
+
+        if (!layers.count(_id))
+            return;
+        DataLayer const& layer = layers.at(_id);
+        if (layer.payload_size != sizeof(DataType))
+            return;
+
+        Node const* node = LookupNode(_point);
+        uint64_t node_data_id = NodeDataLayerID(node, _id);
+
+        if (!node_data.count(node_data_id))
+            node_data.emplace(node_data_id,
+                              std::unique_ptr<uint8_t[]>{
+                                  new uint8_t[layer.payload_size * Node::kChildCount]
+                              }
+            );
+
+        DataType* data_store = (DataType*)node_data.at(node_data_id).get();
+        data_store[node->ChildIndex(node->LocalPoint(_point))] = _data;
+    }
+
+    template <typename T>
+    std::remove_cvref<T>::type const& LoadData(numtk::vec3i const& _point, uint8_t _id) const {
+        using DataType = std::remove_cvref<T>::type;
+        static DataType const kDefaultValue = DataType{};
+
+        if (!layers.count(_id))
+            return kDefaultValue;
+        DataLayer const& layer = layers.at(_id);
+        if (layer.payload_size != sizeof(DataType))
+            return kDefaultValue;
+
+        if (!Test(_point))
+            return *(DataType const*)layer.default_value.get();
+
+        Node const* node = LookupNode(_point);
+        uint64_t node_data_id = NodeDataLayerID(node, _id);
+
+        if (!node_data.count(node_data_id))
+            return *(DataType const*)layer.default_value.get();
+
+        DataType const* data_store = (DataType const*)node_data.at(node_data_id).get();
+        return data_store[node->ChildIndex(node->LocalPoint(_point))];
+    }
+
+    static uint64_t NodeDataLayerID(Node const* _node, uint8_t _id) {
+        assert(!((uint64_t)_node & ~0x0000ffffffffffffull));
+        return ((uint64_t)_node & 0x0000ffffffffffffull) | ((uint64_t)_id << 56);
+    }
+
+    struct DataLayer {
+        size_t payload_size;
+        std::unique_ptr<uint8_t[]> default_value;
+        void(*dtor)(void*);
+        void(*copy)(void*, void const*);
+    };
+    std::unordered_map<uint8_t, DataLayer> layers{};
+    std::unordered_map<uint64_t, std::unique_ptr<uint8_t[]>> node_data{};
+};
+
+struct VoxelFieldCompat : public VoxelField
+{
+    VoxelFieldCompat() = default;
+    VoxelFieldCompat(VoxelFieldCompat&&) = default;
+    VoxelFieldCompat(VoxelFieldCompat const&) = delete;
+    VoxelFieldCompat& operator=(VoxelFieldCompat&&) = default;
+    VoxelFieldCompat& operator=(VoxelFieldCompat const&) = delete;
+
+    VoxelFieldCompat(numtk::vec3u const&) {}
+    void Set(numtk::vec3u const& _point, bool _v) {
+        VoxelField::Set(_point.cast<int32_t>(), _v);
+    }
+    void Set(numtk::bounds3u const& _bounds, bool _v) {
+        VoxelField::SetVolume({ _bounds.min.cast<int32_t>(),
+            _bounds.max.cast<int32_t>() }, _v);
+    }
+
+    bool Test(numtk::vec3u const& _point) const {
+        return VoxelField::Test(_point.cast<int32_t>()); }
+    uint64_t GetEnclosingKernel(numtk::vec3u const& _point) const {
+        return VoxelField::TestKernel(_point.cast<int32_t>()); }
+
+    template <typename T>
+    void StoreData(numtk::vec3u const& _point, uint8_t _id, T&& _data) {
+        VoxelField::StoreData(_point.cast<int32_t>(), _id, _data);
+    }
+    template <typename T>
+    std::remove_cvref<T>::type const& LoadData(numtk::vec3u const& _point, uint8_t _id) const {
+        return VoxelField::LoadData<T>(_point.cast<int32_t>(), _id); }
+
+    numtk::vec3u Size() const { return bounds.extent().cast<uint32_t>(); }
 };
 
 } // namespace voxtk
@@ -473,6 +597,20 @@ VoxelField::Test(numtk::vec3i const& _point) const
 {
     Node* current_node = LookupNode(_point);
     return current_node && current_node->data_mask.Test(current_node->LocalPoint(_point));
+}
+
+uint64_t
+VoxelField::TestKernel(numtk::vec3i const& _point) const
+{
+    Node const* node = LookupNode(_point);
+    if (!node) return 0;
+    numtk::vec3u local_point = node->LocalPoint(_point);
+    if (!node->depth)
+        return node->data_mask.ExtractKernel(local_point);
+    else
+        return node->child_mask.Test(local_point)
+            ? ~(uint64_t)0
+            : 0;
 }
 
 VoxelField::Node*
