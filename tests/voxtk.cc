@@ -21,7 +21,7 @@ int main(int argc, char const** argv)
         test_field.EmplaceLeaf({ -1, -1, -1 });
         test_field.EmplaceLeaf({ 1, 1, 1 });
 
-        for (uint32_t index = 1; index < 9; ++index)
+        for (uint32_t index = 1; index < 10; ++index)
         {
             int32_t offset = -(1 << (voxtk::VoxelMask::kLogSize * index));
             voxtk::VoxelField::Node const* leaf0 =
