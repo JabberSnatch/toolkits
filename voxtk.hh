@@ -472,7 +472,15 @@ struct VoxelFieldCompat : public VoxelField
     VoxelFieldCompat& operator=(VoxelFieldCompat&&) = default;
     VoxelFieldCompat& operator=(VoxelFieldCompat const&) = delete;
 
-    VoxelFieldCompat(numtk::vec3u const&) {}
+    VoxelFieldCompat(numtk::vec3u const& _size) {
+        root = node_pool[node_pool.Emplace(
+                nullptr,
+                numtk::vec3i{ 0, 0, 0 },
+                0u)];
+        bounds = root->Bounds();
+        RelocateRoot(numtk::bounds3i{ { 0, 0, 0 }, _size.cast<int32_t>() });
+        bounds = root->Bounds();
+    }
     void Set(numtk::vec3u const& _point, bool _v) {
         VoxelField::Set(_point.cast<int32_t>(), _v);
     }
