@@ -473,10 +473,15 @@ struct VoxelFieldCompat : public VoxelField
     VoxelFieldCompat& operator=(VoxelFieldCompat const&) = delete;
 
     VoxelFieldCompat(numtk::vec3u const& _size) {
+        uint32_t max_size = std::max(std::max(_size.x, _size.y), _size.z);
+        uint32_t log_size = numtk::ilogN<VoxelMask::kSize>(max_size);
+        if (1u << (VoxelMask::kLogSize * log_size) < max_size)
+            ++log_size;
+
         root = node_pool[node_pool.Emplace(
                 nullptr,
                 numtk::vec3i{ 0, 0, 0 },
-                0u)];
+                std::max(log_size, 1u))];
         bounds = root->Bounds();
         RelocateRoot(numtk::bounds3i{ { 0, 0, 0 }, _size.cast<int32_t>() });
         bounds = root->Bounds();
@@ -517,8 +522,9 @@ VoxelField::Set(numtk::vec3i const& _point, bool _v)
 {
     Node* current_node = LookupNode(_point);
 
-    if (!current_node || current_node->depth
-        || current_node->data_mask.Test(current_node->LocalPoint(_point)) != _v)
+    if (!current_node ||
+        (current_node->depth
+         && current_node->data_mask.Test(current_node->LocalPoint(_point)) != _v))
         current_node = EmplaceLeaf(_point);
 
     if(current_node->depth == 0)
@@ -635,10 +641,13 @@ VoxelField::EmplaceLeaf(numtk::vec3i const& _global_point)
     }
 
     Node* current_node = LookupNode(_global_point);
+    assert(!current_node || current_node->depth);
+
     if (!current_node)
     {
         RelocateRoot(_global_point);
-        current_node = LookupNode(_global_point);
+        current_node = root;
+        assert(LookupNode(_global_point) == root);
         assert(current_node && current_node->depth);
     }
 
