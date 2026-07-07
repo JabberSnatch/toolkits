@@ -474,16 +474,16 @@ struct VoxelFieldCompat : public VoxelField
 
     VoxelFieldCompat(numtk::vec3u const& _size) {
         uint32_t max_size = std::max(std::max(_size.x, _size.y), _size.z);
-        uint32_t log_size = numtk::ilogN<VoxelMask::kSize>(max_size);
+        uint32_t log_size = std::max(numtk::ilogN<VoxelMask::kSize>(max_size), 1u);
         if (1u << (VoxelMask::kLogSize * log_size) < max_size)
             ++log_size;
+
+        size = _size;
 
         root = node_pool[node_pool.Emplace(
                 nullptr,
                 numtk::vec3i{ 0, 0, 0 },
-                std::max(log_size, 1u))];
-        bounds = root->Bounds();
-        RelocateRoot(numtk::bounds3i{ { 0, 0, 0 }, _size.cast<int32_t>() });
+                log_size-1)];
         bounds = root->Bounds();
     }
     void Set(numtk::vec3u const& _point, bool _v) {
@@ -507,7 +507,8 @@ struct VoxelFieldCompat : public VoxelField
     std::remove_cvref<T>::type const& LoadData(numtk::vec3u const& _point, uint8_t _id) const {
         return VoxelField::LoadData<T>(_point.cast<int32_t>(), _id); }
 
-    numtk::vec3u Size() const { return bounds.extent().cast<uint32_t>(); }
+    numtk::vec3u size = {};
+    numtk::vec3u Size() const { return size; }
 };
 
 } // namespace voxtk
