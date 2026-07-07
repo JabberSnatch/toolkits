@@ -669,8 +669,7 @@ VoxelField::EmplaceLeaf(numtk::vec3i const& _global_point)
     if (!current_node)
     {
         RelocateRoot(_global_point);
-        current_node = root;
-        assert(LookupNode(_global_point) == root);
+        current_node = LookupNode(_global_point);
         assert(current_node && current_node->depth);
     }
 
