@@ -111,7 +111,7 @@ struct BinaryRegion
 
     bool Test(numtk::vec3u const& _point) const;
 
-    void Set(numtk::vec3u const& _point, bool _v);
+    void Set(numtk::vec3u const& _point, bool _v) { _Set(_point, _v); }
     void Set(numtk::bounds3u const& _bounds, bool _v);
     void Set(numtk::vec3i const& _begin, BinaryRegion const& _v);
 
@@ -164,6 +164,9 @@ struct BinaryRegion
     Node* FindDeepestNode(numtk::vec3u const& _point) const;
     Node* InsertChild(Node* _parent, numtk::vec3u const& _local_point);
 
+    Node* _Set(numtk::vec3u const& _point, bool _v);
+    bool _Test(Node const* _node, numtk::vec3u const& _point) const;
+
     Node* root = nullptr;
     dstk::ObjectPool<Node> node_pool{};
     numtk::vec3u size;
@@ -198,7 +201,7 @@ struct BinaryRegion
     template <typename T>
     void StoreData(numtk::vec3u const& _point, uint8_t _id, T&& _data) {
         using DataType = std::remove_cvref<T>::type;
-        Set(_point, true);
+        Node const* node = _Set(_point, true);
 
         if (!layers.count(_id))
             return;
@@ -206,7 +209,6 @@ struct BinaryRegion
         if (layer.payload_size != sizeof(DataType))
             return;
 
-        Node const* node = FindDeepestNode(_point);
         uint64_t node_data_id = NodeDataLayerID(node, _id);
 
         if (!node_data.count(node_data_id))
@@ -231,10 +233,10 @@ struct BinaryRegion
         if (layer.payload_size != sizeof(DataType))
             return kDefaultValue;
 
-        if (!Test(_point))
+        Node const* node = FindDeepestNode(_point);
+        if (!node || !_Test(node, _point))
             return *(DataType const*)layer.default_value.get();
 
-        Node const* node = FindDeepestNode(_point);
         uint64_t node_data_id = NodeDataLayerID(node, _id);
 
         if (!node_data.count(node_data_id))
@@ -263,7 +265,7 @@ struct VoxelField
 {
     VoxelField() {}
 
-    void Set(numtk::vec3i const& _point, bool _v);
+    void Set(numtk::vec3i const& _point, bool _v) { _Set(_point, _v); }
     void SetVolume(numtk::bounds3i const& _bounds, bool _v);
     bool Test(numtk::vec3i const& _point) const;
     uint64_t TestKernel(numtk::vec3i const& _point) const;
@@ -304,17 +306,25 @@ struct VoxelField
             : depth{ _depth }
             , parent{ _parent }
         {
+#define NODE_POINT_OFFSET
+#define NODE_EXPLICIT_BOUNDS
+
+#ifdef NODE_POINT_OFFSET
             point = DepthMap(_base, depth+1);
             offset = (_base - Base()).cast<uint32_t>();
+#else
+            point = _base;
+#endif
 
-#define NODE_EXPLICIT_BOUNDS
 #ifdef NODE_EXPLICIT_BOUNDS
             bounds = numtk::bounds3i::MinExtent(
+#ifdef NODE_POINT_OFFSET
                 Base() + offset.cast<int32_t>(),
+#else
+                point,
+#endif
                 numtk::vec3i::Constant(1u << (VoxelMask::kLogSize * (depth+1)))
             );
-#else
-            bounds = Bounds();
 #endif
 
             if (_parent)
@@ -322,24 +332,38 @@ struct VoxelField
         }
 
         numtk::vec3i Base() const {
+#ifdef NODE_POINT_OFFSET
             return point * (1u << (VoxelMask::kLogSize * (depth+1)));
+#else
+            return AlignedBase(point, depth);
+#endif
         }
 
 #ifdef NODE_EXPLICIT_BOUNDS
         numtk::bounds3i Bounds() const { return bounds; }
 #else
+
         numtk::bounds3i Bounds() const {
             return numtk::bounds3i::MinExtent(
+#ifdef NODE_POINT_OFFSET
                 Base() + offset.cast<int32_t>(),
                 numtk::vec3i::Constant(1u << (VoxelMask::kLogSize * (depth+1)))
+#else
+                point,
+                numtk::vec3i::Constant(DepthSize(depth))
+#endif
             );
         }
 #endif
 
         numtk::vec3u LocalPoint(numtk::vec3i const& _point) const {
+#ifdef NODE_POINT_OFFSET
             return (DepthMap(_point - offset.cast<int32_t>(), depth)
                     & VoxelMask::kSizeMask)
                 .cast<uint32_t>();
+#else
+            return (DepthMap(_point - point, depth) & VoxelMask::kSizeMask).cast<uint32_t>();
+#endif
         }
 
         uint16_t ChildIndex(numtk::vec3u const& _child) const{
@@ -350,9 +374,13 @@ struct VoxelField
 #ifdef NODE_EXPLICIT_BOUNDS
             return bounds.Contains(_point);
 #else
+#ifdef NODE_POINT_OFFSET
             numtk::vec3i local_point =
                 DepthMap(_point - offset.cast<int32_t>(), depth)
                 - (point << VoxelMask::kLogSize);
+#else
+            numtk::vec3i local_point = DepthMap(_point - point, depth);
+#endif
             return (uint32_t)local_point.x < VoxelMask::kSize
                 && (uint32_t)local_point.y < VoxelMask::kSize
                 && (uint32_t)local_point.z < VoxelMask::kSize;
@@ -373,7 +401,10 @@ struct VoxelField
 
         uint32_t depth;
         numtk::vec3i point;
+
+#ifdef NODE_POINT_OFFSET
         numtk::vec3u offset;
+#endif
 
 #ifdef NODE_EXPLICIT_BOUNDS
         numtk::bounds3i bounds;
@@ -390,9 +421,11 @@ struct VoxelField
     dstk::ObjectPool<Node> node_pool{};
     numtk::bounds3i bounds;
 
-    Node* EmplaceLeaf(numtk::vec3i const& _global_point);
+    Node* EmplaceLeaf(Node* _ancestor, numtk::vec3i const& _global_point);
     Node* LookupNode(numtk::vec3i const& _global_point) const;
     template <typename T> void RelocateRoot(T const& _global_bounds);
+    Node* _Set(numtk::vec3i const& _point, bool _v);
+    bool _Test(Node const* _node, numtk::vec3i const& _point) const;
 
     // =========================================================================
     // DATA LAYERS
@@ -425,7 +458,7 @@ struct VoxelField
     template <typename T>
     void StoreData(numtk::vec3i const& _point, uint8_t _id, T&& _data) {
         using DataType = std::remove_cvref<T>::type;
-        Set(_point, true);
+        Node const* node = _Set(_point, true);
 
         if (!layers.count(_id))
             return;
@@ -433,7 +466,6 @@ struct VoxelField
         if (layer.payload_size != sizeof(DataType))
             return;
 
-        Node const* node = LookupNode(_point);
         uint64_t node_data_id = NodeDataLayerID(node, _id);
 
         if (!node_data.count(node_data_id))
@@ -458,10 +490,10 @@ struct VoxelField
         if (layer.payload_size != sizeof(DataType))
             return kDefaultValue;
 
-        if (!Test(_point))
+        Node const* node = LookupNode(_point);
+        if (!node || !_Test(node, _point))
             return *(DataType const*)layer.default_value.get();
 
-        Node const* node = LookupNode(_point);
         uint64_t node_data_id = NodeDataLayerID(node, _id);
 
         if (!node_data.count(node_data_id))
@@ -540,18 +572,20 @@ struct VoxelFieldCompat : public VoxelField
 namespace voxtk
 {
 
-void
-VoxelField::Set(numtk::vec3i const& _point, bool _v)
+VoxelField::Node*
+VoxelField::_Set(numtk::vec3i const& _point, bool _v)
 {
     Node* current_node = LookupNode(_point);
 
     if (!current_node ||
         (current_node->depth
          && current_node->data_mask.Test(current_node->LocalPoint(_point)) != _v))
-        current_node = EmplaceLeaf(_point);
+        current_node = EmplaceLeaf(current_node, _point);
 
     if(current_node->depth == 0)
         current_node->data_mask.Set(current_node->LocalPoint(_point), _v);
+
+    return current_node;
 }
 
 void
@@ -633,7 +667,13 @@ bool
 VoxelField::Test(numtk::vec3i const& _point) const
 {
     Node* current_node = LookupNode(_point);
-    return current_node && current_node->data_mask.Test(current_node->LocalPoint(_point));
+    return current_node && _Test(current_node, _point);
+}
+
+bool
+VoxelField::_Test(Node const* _node, numtk::vec3i const& _point) const
+{
+    return _node->data_mask.Test(_node->LocalPoint(_point));
 }
 
 uint64_t
@@ -651,7 +691,7 @@ VoxelField::TestKernel(numtk::vec3i const& _point) const
 }
 
 VoxelField::Node*
-VoxelField::EmplaceLeaf(numtk::vec3i const& _global_point)
+VoxelField::EmplaceLeaf(Node* _ancestor, numtk::vec3i const& _global_point)
 {
     if (!root)
     {
@@ -663,7 +703,7 @@ VoxelField::EmplaceLeaf(numtk::vec3i const& _global_point)
         return root;
     }
 
-    Node* current_node = LookupNode(_global_point);
+    Node* current_node = _ancestor;
     assert(!current_node || current_node->depth);
 
     if (!current_node)
@@ -722,7 +762,11 @@ VoxelField::RelocateRoot(T const& _global_bounds)
              && extent.y <= node_size
              && extent.z <= node_size))
     {
+#ifdef NODE_POINT_OFFSET
         if (root->offset == numtk::vec3u::Constant(0))
+#else
+        if (root->point == Node::AlignedBase(root->point, root->depth))
+#endif
         {
             // Aligned case is only a matter of inserting root into its new parent
             Node* next = node_pool[node_pool.Emplace(
@@ -748,7 +792,11 @@ VoxelField::RelocateRoot(T const& _global_bounds)
             for (Node* child : tmp.children)
             {
                 if (!child) continue;
+#ifdef NODE_POINT_OFFSET
                 assert(child->offset == numtk::vec3u::Constant(0));
+#else
+                assert(child->point == Node::AlignedBase(child->point, child->depth));
+#endif
 
                 Node* parent = root;
                 numtk::vec3i child_base = child->Base();
@@ -881,18 +929,29 @@ BinaryRegion::Test(numtk::vec3u const& _point) const
         return node->child_mask.Test(node->LocalPoint(_point));
 }
 
-void
-BinaryRegion::Set(numtk::vec3u const& _point, bool _v)
+bool
+BinaryRegion::_Test(Node const* _node, numtk::vec3u const& _point) const
+{
+    if (!_node->depth)
+        return _node->data_mask.Test(_node->LocalPoint(_point));
+    else
+        return _node->child_mask.Test(_node->LocalPoint(_point));
+}
+
+BinaryRegion::Node*
+BinaryRegion::_Set(numtk::vec3u const& _point, bool _v)
 {
     Node* node = FindDeepestNode(_point);
     if (!node)
-        return;
+        return nullptr;
 
     if ((node->depth && (node->data_mask.Test(node->LocalPoint(_point))) != _v))
         node = MakeCell(BinaryRegion::CellLocation(_point));
 
     if (!node->depth)
         node->data_mask.Set(node->LocalPoint(_point), _v);
+
+    return node;
 }
 
 void
