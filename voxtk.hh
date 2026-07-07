@@ -307,6 +307,16 @@ struct VoxelField
             point = DepthMap(_base, depth+1);
             offset = (_base - Base()).cast<uint32_t>();
 
+#define NODE_EXPLICIT_BOUNDS
+#ifdef NODE_EXPLICIT_BOUNDS
+            bounds = numtk::bounds3i::MinExtent(
+                Base() + offset.cast<int32_t>(),
+                numtk::vec3i::Constant(1u << (VoxelMask::kLogSize * (depth+1)))
+            );
+#else
+            bounds = Bounds();
+#endif
+
             if (_parent)
                 _parent->BindChild(this);
         }
@@ -315,12 +325,16 @@ struct VoxelField
             return point * (1u << (VoxelMask::kLogSize * (depth+1)));
         }
 
+#ifdef NODE_EXPLICIT_BOUNDS
+        numtk::bounds3i Bounds() const { return bounds; }
+#else
         numtk::bounds3i Bounds() const {
             return numtk::bounds3i::MinExtent(
                 Base() + offset.cast<int32_t>(),
                 numtk::vec3i::Constant(1u << (VoxelMask::kLogSize * (depth+1)))
             );
         }
+#endif
 
         numtk::vec3u LocalPoint(numtk::vec3i const& _point) const {
             return (DepthMap(_point - offset.cast<int32_t>(), depth)
@@ -333,12 +347,16 @@ struct VoxelField
         }
 
         bool Contains(numtk::vec3i const& _point) const {
+#ifdef NODE_EXPLICIT_BOUNDS
+            return bounds.Contains(_point);
+#else
             numtk::vec3i local_point =
                 DepthMap(_point - offset.cast<int32_t>(), depth)
                 - (point << VoxelMask::kLogSize);
-            return local_point.x >= 0 && local_point.x < VoxelMask::kSize
-                && local_point.y >= 0 && local_point.y < VoxelMask::kSize
-                && local_point.z >= 0 && local_point.z < VoxelMask::kSize;
+            return (uint32_t)local_point.x < VoxelMask::kSize
+                && (uint32_t)local_point.y < VoxelMask::kSize
+                && (uint32_t)local_point.z < VoxelMask::kSize;
+#endif
         }
 
         void BindChild(Node* _child) {
@@ -356,6 +374,10 @@ struct VoxelField
         uint32_t depth;
         numtk::vec3i point;
         numtk::vec3u offset;
+
+#ifdef NODE_EXPLICIT_BOUNDS
+        numtk::bounds3i bounds;
+#endif
 
         VoxelMask child_mask{};
         VoxelMask data_mask{};
