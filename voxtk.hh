@@ -306,7 +306,7 @@ struct VoxelField
             : depth{ _depth }
             , parent{ _parent }
         {
-#define NODE_POINT_OFFSET
+            //#define NODE_POINT_OFFSET
 #define NODE_EXPLICIT_BOUNDS
 
 #ifdef NODE_POINT_OFFSET
