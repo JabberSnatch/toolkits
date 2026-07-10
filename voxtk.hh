@@ -267,6 +267,7 @@ struct VoxelField
 
     void Set(numtk::vec3i const& _point, bool _v) { _Set(_point, _v); }
     void SetVolume(numtk::bounds3i const& _bounds, bool _v);
+    void SetField(numtk::vec3i const& _begin, VoxelField const& _v);
     bool Test(numtk::vec3i const& _point) const;
     uint64_t TestKernel(numtk::vec3i const& _point) const;
 
@@ -662,6 +663,62 @@ VoxelField::SetVolume(numtk::bounds3i const& _bounds, bool _v)
         }
     }
 }
+
+void
+VoxelField::SetField(numtk::vec3i const& _begin, VoxelField const& _v)
+{
+    assert(root->point == _v.root->point);
+    assert(root->depth == _v.root->depth);
+
+    std::vector<Node*> node_queue{ _v.root };
+    node_queue.reserve(Node::kChildCount*2);
+    while (!node_queue.empty())
+    {
+        Node* current_node = node_queue.back();
+        node_queue.pop_back();
+
+        if (current_node->depth)
+        {
+            for (Node* child : current_node->children)
+                if (child)
+                    node_queue.push_back(child);
+        }
+        else
+        {
+            Node* target_node = LookupNode(current_node->Base());
+            if (!target_node || target_node->depth)
+                target_node = EmplaceLeaf(target_node, current_node->Base());
+
+            assert(target_node->depth == current_node->depth);
+            assert(target_node->Base() == current_node->Base());
+
+            target_node->data_mask = current_node->data_mask;
+
+            for (auto&& pair : _v.layers)
+            {
+                uint64_t source_data_id = NodeDataLayerID(current_node, pair.first);
+                if (!_v.node_data.count(source_data_id))
+                    continue;
+
+                uint64_t target_data_id = NodeDataLayerID(target_node, pair.first);
+                DataLayer const& layer = layers.at(pair.first);
+
+                if (!node_data.count(target_data_id))
+                    node_data.emplace(target_data_id,
+                                      std::unique_ptr<uint8_t[]>{
+                                          new uint8_t[layer.payload_size * Node::kChildCount]
+                                      }
+                    );
+
+                std::memcpy(
+                    node_data[target_data_id].get(),
+                    _v.node_data.at(source_data_id).get(),
+                    layer.payload_size * Node::kChildCount);
+            }
+        }
+    }
+}
+
 
 bool
 VoxelField::Test(numtk::vec3i const& _point) const
