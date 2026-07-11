@@ -267,7 +267,7 @@ struct VoxelField
 
     void Set(numtk::vec3i const& _point, bool _v) { _Set(_point, _v); }
     void SetVolume(numtk::bounds3i const& _bounds, bool _v);
-    void SetField(numtk::vec3i const& _begin, VoxelField const& _v);
+    void SetField(numtk::vec3i const& _offset, VoxelField const& _v);
     bool Test(numtk::vec3i const& _point) const;
     uint64_t TestKernel(numtk::vec3i const& _point) const;
 
@@ -665,7 +665,7 @@ VoxelField::SetVolume(numtk::bounds3i const& _bounds, bool _v)
 }
 
 void
-VoxelField::SetField(numtk::vec3i const& _begin, VoxelField const& _v)
+VoxelField::SetField(numtk::vec3i const& _offset, VoxelField const& _v)
 {
     assert(root->point == _v.root->point);
     assert(root->depth == _v.root->depth);
@@ -685,12 +685,17 @@ VoxelField::SetField(numtk::vec3i const& _begin, VoxelField const& _v)
         }
         else
         {
-            Node* target_node = LookupNode(current_node->Base());
+            numtk::vec3i aligned_offset = Node::AlignedBase(_offset, current_node->depth);
+            numtk::vec3i local_offset = _offset - aligned_offset;
+            numtk::vec3i target_base = current_node->Base() + aligned_offset;
+
+            assert(local_offset == numtk::vec3i::Constant(0));
+
+            Node* target_node = LookupNode(target_base);
             if (!target_node || target_node->depth)
-                target_node = EmplaceLeaf(target_node, current_node->Base());
+                target_node = EmplaceLeaf(target_node, target_base);
 
             assert(target_node->depth == current_node->depth);
-            assert(target_node->Base() == current_node->Base());
 
             target_node->data_mask = current_node->data_mask;
 
