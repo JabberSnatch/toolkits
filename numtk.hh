@@ -480,6 +480,12 @@ BitTrailingZeroCount(uint64_t _v)
     return (uint64_t)_tzcnt_u64(_v);
 }
 
+inline uint64_t
+BitLeadingZeroCount(uint64_t _v)
+{
+    return (uint64_t)_lzcnt_u64(_v);
+}
+
 } // namespace numtk
 
 template <typename scalar>
