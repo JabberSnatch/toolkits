@@ -539,7 +539,7 @@ struct VoxelFieldCompat : public VoxelField
                 nullptr,
                 numtk::vec3i{ 0, 0, 0 },
                 log_size-1)];
-        bounds = root->Bounds();
+        bounds = numtk::bounds3i{ { 0, 0, 0 }, _size.cast<int32_t>() };
     }
     void Set(numtk::vec3u const& _point, bool _v) {
         VoxelField::Set(_point.cast<int32_t>(), _v);
