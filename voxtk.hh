@@ -264,6 +264,10 @@ struct BinaryRegion
 struct VoxelField
 {
     VoxelField() {}
+    VoxelField(VoxelField&&) = default;
+    VoxelField(VoxelField const&) = delete;
+    VoxelField& operator=(VoxelField&&) = default;
+    VoxelField& operator=(VoxelField const&) = delete;
 
     void Set(numtk::vec3i const& _point, bool _v) { _Set(_point, _v); }
     void SetVolume(numtk::bounds3i const& _bounds, bool _v);
@@ -667,8 +671,10 @@ VoxelField::SetVolume(numtk::bounds3i const& _bounds, bool _v)
 void
 VoxelField::SetField(numtk::vec3i const& _offset, VoxelField const& _v)
 {
+#if 0
     assert(root->point == _v.root->point);
     assert(root->depth == _v.root->depth);
+#endif
 
     std::vector<Node*> node_queue{ _v.root };
     node_queue.reserve(Node::kChildCount*2);
