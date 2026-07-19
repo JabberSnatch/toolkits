@@ -14,6 +14,7 @@ struct VoxelMask
     static constexpr int32_t kLogSize = 3;
     static constexpr uint32_t kSizeMask = 0x7u;
     static constexpr int32_t kVolume = kSize*kSize*kSize;
+    static constexpr int32_t kKernelSize = 4;
 
     static constexpr VoxelMask kFullMask() { return VoxelMask{ ~0ull, ~0ull, ~0ull, ~0ull, ~0ull, ~0ull, ~0ull, ~0ull }; }
     static constexpr VoxelMask kEmptyMask() { return VoxelMask{ 0ull, 0ull, 0ull, 0ull, 0ull, 0ull, 0ull, 0ull }; }
