@@ -3,6 +3,8 @@
 #include "numtk.hh"
 #include "dstk.hh"
 
+#include <bit>
+
 #define INLINE_PDEP
 
 namespace voxtk
@@ -81,6 +83,16 @@ struct VoxelMask
     }
 
     uint64_t ExtractKernel(numtk::vec3u const& base) const;
+    uint32_t Popcount() const {
+        return (uint32_t)(std::popcount(bits[0])
+                          + std::popcount(bits[1])
+                          + std::popcount(bits[2])
+                          + std::popcount(bits[3])
+                          + std::popcount(bits[4])
+                          + std::popcount(bits[5])
+                          + std::popcount(bits[6])
+                          + std::popcount(bits[7]));
+    }
 
     VoxelMask& Set(uint16_t bit_index, bool v);
     VoxelMask& Set(numtk::vec3u const& point, bool v);
@@ -275,6 +287,7 @@ struct VoxelField
     void SetField(numtk::vec3i const& _offset, VoxelField const& _v);
     bool Test(numtk::vec3i const& _point) const;
     uint64_t TestKernel(numtk::vec3i const& _point) const;
+    uint64_t Popcount() const;
 
     struct Node {
         static constexpr uint32_t kChildCount = VoxelMask::kVolume;
@@ -598,13 +611,7 @@ void
 VoxelField::SetVolume(numtk::bounds3i const& _bounds, bool _v)
 {
     if (!root)
-    {
-        root = node_pool[node_pool.Emplace(
-                nullptr,
-                Node::AlignedBase(_bounds.min, 0),
-                0u)];
-        bounds = root->Bounds();
-    }
+        EmplaceLeaf(nullptr, _bounds.min);
 
     if (!root->Contains(_bounds.min) || !root->Contains(_bounds.max - numtk::vec3i::Constant(1)))
         RelocateRoot(_bounds);
@@ -678,7 +685,7 @@ VoxelField::SetField(numtk::vec3i const& _offset, VoxelField const& _v)
 #endif
 
     std::vector<Node*> node_queue{ _v.root };
-    node_queue.reserve(Node::kChildCount*2);
+    node_queue.reserve(Node::kChildCount * _v.root->depth);
     while (!node_queue.empty())
     {
         Node* current_node = node_queue.back();
@@ -757,6 +764,32 @@ VoxelField::TestKernel(numtk::vec3i const& _point) const
         return node->child_mask.Test(local_point)
             ? ~(uint64_t)0
             : 0;
+}
+
+uint64_t
+VoxelField::Popcount() const
+{
+    if (!root) return 0ull;
+
+    uint64_t current_count = 0ull;
+    std::vector<Node*> node_queue{ root };
+    node_queue.reserve(Node::kChildCount * root->depth);
+    while (!node_queue.empty())
+    {
+        Node* current_node = node_queue.back();
+        node_queue.pop_back();
+
+        if (!current_node->depth)
+            current_count += (uint64_t)current_node->data_mask.Popcount();
+        else
+        {
+            for (Node* child : current_node->children)
+                if (child)
+                    node_queue.push_back(child);
+        }
+    }
+
+    return current_count;
 }
 
 VoxelField::Node*
