@@ -562,6 +562,8 @@ struct Registry
 
     template <typename CType> std::vector<CType const*> ComponentRangeLookup(Node n) const {
         ComponentID const component_id = Component<CType>();
+        if (components.count(component_id) == 0)
+            return {};
 
         std::vector<ComponentBinding> const& bindings = nodes.at(n);
         auto range_begin = std::lower_bound(
@@ -597,6 +599,9 @@ struct Registry
 
     template <typename CType> void ComponentRangeErase(Node n, uint32_t key_begin = 0, uint32_t key_end = UINT32_MAX) {
         ComponentID const component_id = Component<CType>();
+        if (components.count(component_id) == 0)
+            return;
+
         std::vector<ComponentBinding>& bindings = nodes.at(n);
 
         auto range_begin = std::lower_bound(
