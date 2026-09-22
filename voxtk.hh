@@ -107,7 +107,7 @@ struct VoxelMask
     uint64_t bits[8];
 };
 
-#define DENSE_CHILDREN_ARRAY
+//#define DENSE_CHILDREN_ARRAY
 
 struct BinaryRegion
 {
@@ -414,7 +414,11 @@ struct VoxelField
             assert(_child->depth == depth-1);
 
             uint16_t child_index = ChildIndex(LocalPoint(_child->Base()));
+#ifndef DENSE_CHILDREN_ARRAY
+            children.insert(child_index, _child);
+#else
             children[child_index] = _child;
+#endif
             child_mask.Set(child_index, true);
             _child->parent = this;
         }
@@ -434,7 +438,11 @@ struct VoxelField
         VoxelMask data_mask{};
 
         Node const* parent;
+#ifndef DENSE_CHILDREN_ARRAY
+        dstk::FlatMap<uint16_t, Node*> children{};
+#else
         std::vector<Node*> children = std::vector<Node*>(kChildCount);
+#endif
     };
 
     Node* root = nullptr;
@@ -664,11 +672,19 @@ VoxelField::SetVolume(numtk::bounds3i const& _bounds, bool _v)
                                 child.cast<int32_t>() + node_min,
                                 current_node->depth
                             );
-                            current_node->children[child_index] =
+
+                            Node* child_node =
                                 node_pool[node_pool.Emplace(
                                     current_node,
                                     child_begin,
                                     current_node->depth-1)];
+
+#ifndef DENSE_CHILDREN_ARRAY
+                            current_node->children.insert(child_index, child_node);
+#else
+                            current_node->children[child_index] = child_node;
+#endif
+
                         }
 
                         node_queue.push_back(current_node->children[child_index]);
@@ -694,9 +710,14 @@ VoxelField::SetField(numtk::vec3i const& _offset, VoxelField const& _v)
 
         if (current_node->depth)
         {
+#ifndef DENSE_CHILDREN_ARRAY
+            for (Node* child : current_node->children.ItemsRange())
+                node_queue.push_back(child);
+#else
             for (Node* child : current_node->children)
                 if (child)
                     node_queue.push_back(child);
+#endif
         }
         else
         {
@@ -784,9 +805,14 @@ VoxelField::Popcount() const
             current_count += (uint64_t)current_node->data_mask.Popcount();
         else
         {
+#ifndef DENSE_CHILDREN_ARRAY
+            for (Node* child : current_node->children.ItemsRange())
+                node_queue.push_back(child);
+#else
             for (Node* child : current_node->children)
                 if (child)
                     node_queue.push_back(child);
+#endif
         }
     }
 
@@ -892,9 +918,16 @@ VoxelField::RelocateRoot(T const& _global_bounds)
                 root->depth+1
             };
 
+#ifndef DENSE_CHILDREN_ARRAY
+            for (Node* child : tmp.children.ItemsRange())
+#else
             for (Node* child : tmp.children)
+#endif
             {
+#ifdef DENSE_CHILDREN_ARRAY
                 if (!child) continue;
+#endif
+
 #ifdef NODE_POINT_OFFSET
                 assert(child->offset == numtk::vec3u::Constant(0));
 #else
@@ -942,9 +975,14 @@ VoxelField::RelocateRoot(T const& _global_bounds)
         Node tmp = std::move(*root);
         *root = Node{ nullptr, expanded_bounds.min, root->depth };
 
+#ifndef DENSE_CHILDREN_ARRAY
+        for (Node* child : tmp.children.ItemsRange())
+            root->BindChild(child);
+#else
         for (Node* child : tmp.children)
             if (child)
                 root->BindChild(child);
+#endif
     }
 }
 

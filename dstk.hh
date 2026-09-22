@@ -242,6 +242,15 @@ struct FlatMap
         );
     }
 
+    struct ValueIteratorInterface
+    {
+        std::vector<Value>& items;
+        auto begin() { return items.begin(); }
+        auto end() { return items.end(); }
+    };
+
+    ValueIteratorInterface ItemsRange() { return ValueIteratorInterface{ items }; }
+
     std::vector<Value> items{};
     std::vector<Key> keys{};
 };
