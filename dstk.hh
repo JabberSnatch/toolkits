@@ -505,6 +505,8 @@ struct Registry
 
     template <typename ArgType> auto BindComponent(Node node, ArgType&& component)
     {
+        static_assert(!std::is_integral_v<std::remove_cvref_t<ArgType>>,
+                      "Binding integral without tag?");
         return BindComponent(node, 0, std::forward<ArgType>(component));
     }
 
