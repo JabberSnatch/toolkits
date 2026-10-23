@@ -90,8 +90,8 @@ struct FreeList
         FreeList const* list;
     };
 
-    IndexIterator begin() { return IndexIterator{ 0, 0, this }; }
-    IndexIterator end() { return IndexIterator{ kInvalidIndex, indices.size(), this }; }
+    IndexIterator begin() const { return IndexIterator{ 0, 0, this }; }
+    IndexIterator end() const { return IndexIterator{ kInvalidIndex, indices.size(), this }; }
 
     std::vector<Range> indices;
 };
@@ -592,6 +592,21 @@ struct Registry
         return result;
     }
 
+    template <typename CType> std::vector<CType const*> ComponentGlobalLookup() const {
+        ComponentID const component_id = Component<CType>();
+        if (components.count(component_id) == 0)
+            return {};
+
+        std::vector<CType const*> result = {};
+        ComponentStorage const& storage = components.at(component_id);
+        std::transform(storage.indices.begin(), storage.indices.end(), std::back_inserter(result),
+                       [&storage](FreeList::Index index) {
+                           return (CType const*)storage.data[index];
+                       });
+
+        return result;
+    }
+
     template <typename CType> CType& ComponentRequest(Node n) {
         CType* component = ComponentLookup<CType>(n);
         if (!component)
@@ -653,6 +668,24 @@ struct Registry
         storage.indices.Release(binding_it->index);
         bindings.erase(binding_it);
     }
+
+    template <typename CType> Node NodeLookup(CType const* component) const {
+        ComponentID const component_id = Component<CType>();
+
+        ComponentStorage const& storage = components.at(component_id);
+        uint64_t index = storage.data.Find(component);
+        return (Node)storage.bindings[index];
+    }
+};
+
+}
+
+namespace std {
+
+template <>
+struct iterator_traits<dstk::FreeList::IndexIterator>
+{
+    using iterator_category = std::forward_iterator_tag;
 };
 
 }
