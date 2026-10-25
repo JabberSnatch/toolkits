@@ -133,7 +133,9 @@ struct BlockVector
         if (block_it == blocks.end())
             return ~0ull;
 
-        return (uint64_t)((uint8_t const*)mem - block_it->get());
+        uint64_t offset = (uint64_t)((uint8_t const*)mem - block_it->get());
+        assert(offset % object_size == 0);
+        return offset / object_size;
     }
 
     uint64_t Capacity() const { return block_size * blocks.size(); }
