@@ -416,11 +416,12 @@ struct Registry
     using Node = FreeList::Index;
     using ComponentID = uint64_t;
     using ComponentTag = uint64_t;
+    using ComponentKey = uint32_t;
 
     struct ComponentBinding {
         ComponentID type;
         ComponentTag index;
-        uint32_t order_key;
+        ComponentKey order_key;
     };
 
     struct ComponentStorage {
@@ -433,9 +434,9 @@ struct Registry
 
     Registry() = default;
     Registry(Registry const&) = delete;
-    Registry(Registry&&) = delete;
-    Registry const& operator=(Registry const&) = delete;
-    Registry const& operator=(Registry&&) = delete;
+    Registry(Registry&&) = default;
+    Registry& operator=(Registry const&) = delete;
+    Registry& operator=(Registry&&) = default;
     ~Registry() {
         for (auto&& pair : components)
         {
@@ -457,6 +458,13 @@ struct Registry
         return node;
     }
 
+    void EraseNode(Node node) {
+        std::vector<ComponentBinding> bindings = nodes[node];
+        for (ComponentBinding const& binding : bindings)
+            ComponentErase(binding);
+        handle_pool.Release(node);
+    }
+
     static void InsertComponentBinding(std::vector<ComponentBinding>& components, ComponentBinding const& binding) {
         auto binding_it = std::lower_bound(
             components.begin(), components.end(), binding,
@@ -470,7 +478,7 @@ struct Registry
 
     static ComponentBinding const* LookupComponentBinding(std::vector<ComponentBinding> const& components,
                                                           ComponentID type,
-                                                          uint32_t order_key) {
+                                                          ComponentKey order_key) {
         auto binding_it = std::lower_bound(
             components.begin(), components.end(), std::make_pair(type, order_key),
             [](ComponentBinding const& lhs, auto const& rhs) {
@@ -668,9 +676,14 @@ struct Registry
         if (binding_it == bindings.end())
             return;
 
-        storage.dtor(storage.data[binding_it->index]);
-        storage.indices.Release(binding_it->index);
+        ComponentErase(*binding_it);
         bindings.erase(binding_it);
+    }
+
+    void ComponentErase(ComponentBinding const& binding) {
+        ComponentStorage& storage = components.at(binding.type);
+        storage.dtor(storage.data[binding.index]);
+        storage.indices.Release(binding.index);
     }
 
     template <typename CType> Node NodeLookup(CType const* component) const {
@@ -678,7 +691,7 @@ struct Registry
 
         ComponentStorage const& storage = components.at(component_id);
         uint64_t index = storage.data.Find(component);
-        return (Node)storage.bindings[index];
+        return *(Node*)storage.bindings[index];
     }
 };
 
