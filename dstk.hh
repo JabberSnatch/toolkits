@@ -465,7 +465,8 @@ struct Registry
         handle_pool.Release(node);
     }
 
-    static void InsertComponentBinding(std::vector<ComponentBinding>& components, ComponentBinding const& binding) {
+    static void InsertComponentBinding(std::vector<ComponentBinding>& components,
+                                       ComponentBinding const& binding) {
         auto binding_it = std::lower_bound(
             components.begin(), components.end(), binding,
             [](ComponentBinding const& lhs, ComponentBinding const& rhs) {
@@ -693,6 +694,108 @@ struct Registry
         uint64_t index = storage.data.Find(component);
         return *(Node*)storage.bindings[index];
     }
+};
+
+struct DirectedGraph
+{
+    enum EdgeTag {
+        EdgeTag_Primary,
+        EdgeTag_Secondary,
+    };
+
+    struct Edge {
+        Registry::Node source;
+        Registry::Node sink;
+    };
+
+    struct NodeAdjacency {
+        std::vector<Registry::Node> in;
+        std::vector<Registry::Node> out;
+    };
+
+    Registry::Node NodeCreate(std::string const& name = "") {
+        Registry::Node node = registry->MakeNode();
+        nodes.push_back(node);
+        if (name != "" && !name_lookup.contains(name))
+            name_lookup.emplace(node, name);
+        return node;
+    }
+
+    Registry::Node EdgeCreate(std::string const& source,
+                              std::string const& sink,
+                              EdgeTag tag = EdgeTag_Primary) {
+        Registry::Node source_node = name_lookup[source];
+        Registry::Node sink_node = name_lookup[sink];
+
+        Registry::Node edge = registry->MakeNode();
+        edges.push_back(edge);
+
+        {
+            NodeAdjacency& adjacency = registry->ComponentRequest<NodeAdjacency>(source_node);
+            adjacency.out.push_back(edge);
+        }
+        {
+            NodeAdjacency& adjacency = registry->ComponentRequest<NodeAdjacency>(sink_node);
+            adjacency.in.push_back(edge);
+        }
+
+        registry->BindComponent(edge, Edge{ source_node, sink_node });
+        registry->BindComponent(edge, tag);
+        return edge;
+    }
+
+    std::vector<Registry::Node> PrimaryInputs() const {
+        std::vector<Registry::Node> result = {};
+        for (Registry::Node node : nodes) {
+            NodeAdjacency* adjacency = registry->ComponentLookup<NodeAdjacency>(node);
+            if (!adjacency)
+                continue;
+
+            std::vector<Registry::Node> const& edges = adjacency->in;
+            bool is_input = edges.empty() ||
+                std::all_of(edges.begin(), edges.end(), [this](Registry::Node edge) {
+                    EdgeTag* tag = registry->ComponentLookup<EdgeTag>(edge);
+                    return tag && *tag == EdgeTag_Secondary;
+                });
+
+            if (is_input)
+                result.push_back(node);
+        }
+        return result;
+    }
+
+    std::vector<Registry::Node> PrimaryOutputs() const {
+        std::vector<Registry::Node> result = {};
+        for (Registry::Node node : nodes) {
+            NodeAdjacency* adjacency = registry->ComponentLookup<NodeAdjacency>(node);
+            if (!adjacency)
+                continue;
+
+            std::vector<Registry::Node> const& edges = adjacency->out;
+            bool is_output = edges.empty() ||
+                std::all_of(edges.begin(), edges.end(), [this](Registry::Node edge) {
+                    EdgeTag* tag = registry->ComponentLookup<EdgeTag>(edge);
+                    return tag && *tag == EdgeTag_Secondary;
+                });
+
+            if (is_output)
+                result.push_back(node);
+        }
+        return result;
+    }
+
+    Registry* registry;
+    BijectiveMap<Registry::Node, std::string> name_lookup;
+    std::vector<Registry::Node> nodes;
+    std::vector<Registry::Node> edges;
+};
+
+struct NodeTree
+{
+    void ChildrenInsert(dstk::Registry::Node parent, std::vector<dstk::Registry::Node> children);
+
+    std::vector<dstk::Registry::Node> nodes;
+    std::vector<uint32_t> offsets;
 };
 
 }
