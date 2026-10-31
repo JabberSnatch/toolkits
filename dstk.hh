@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <iterator>
+#include <cassert>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -417,6 +418,7 @@ struct Registry
     using ComponentID = uint64_t;
     using ComponentTag = uint64_t;
     using ComponentKey = uint32_t;
+    static constexpr Node kInvalidNode = FreeList::kInvalidIndex;
 
     struct ComponentBinding {
         ComponentID type;
@@ -699,11 +701,13 @@ struct Registry
 struct DirectedGraph
 {
     enum EdgeTag {
+        EdgeTag_Invalid,
         EdgeTag_Primary,
         EdgeTag_Secondary,
     };
 
     struct Edge {
+        EdgeTag tag;
         Registry::Node source;
         Registry::Node sink;
     };
@@ -713,12 +717,51 @@ struct DirectedGraph
         std::vector<Registry::Node> out;
     };
 
+    DirectedGraph(Registry* _registry = nullptr)
+        : registry{ _registry }
+    {}
+
+    DirectedGraph(DirectedGraph const&) = delete;
+    DirectedGraph& operator=(DirectedGraph const&) = delete;
+
+    ~DirectedGraph() {
+        if (!registry)
+            return;
+
+        for (Registry::Node edge : edges)
+            registry->EraseNode(edge);
+        for (Registry::Node node : nodes)
+            registry->EraseNode(node);
+    }
+
     Registry::Node NodeCreate(std::string const& name = "") {
         Registry::Node node = registry->MakeNode();
-        nodes.push_back(node);
+
+        auto location = std::lower_bound(nodes.begin(), nodes.end(), node);
+        assert(location == nodes.end() || *location != node);
+        nodes.insert(location, node);
+
         if (name != "" && !name_lookup.contains(name))
             name_lookup.emplace(node, name);
         return node;
+    }
+
+    size_t NodeIndex(Registry::Node node) const {
+        auto location = std::lower_bound(nodes.begin(), nodes.end(), node);
+        assert(location != nodes.end() && *location == node);
+        return std::distance(nodes.begin(), location);
+    }
+
+    std::vector<Registry::Node> const& NodeInputs(Registry::Node node) const {
+        static std::vector<Registry::Node> const empty{};
+        NodeAdjacency* adjacency = registry->ComponentLookup<NodeAdjacency>(node);
+        return adjacency != nullptr ? adjacency->in : empty;
+    }
+
+    std::vector<Registry::Node> const& NodeOutputs(Registry::Node node) const {
+        static std::vector<Registry::Node> const empty{};
+        NodeAdjacency* adjacency = registry->ComponentLookup<NodeAdjacency>(node);
+        return adjacency != nullptr ? adjacency->out : empty;
     }
 
     Registry::Node EdgeCreate(std::string const& source,
@@ -739,9 +782,12 @@ struct DirectedGraph
             adjacency.in.push_back(edge);
         }
 
-        registry->BindComponent(edge, Edge{ source_node, sink_node });
-        registry->BindComponent(edge, tag);
+        registry->BindComponent(edge, Edge{ tag, source_node, sink_node });
         return edge;
+    }
+
+    Edge EdgeLookup(Registry::Node edge) const {
+        return *registry->ComponentLookup<Edge>(edge);
     }
 
     std::vector<Registry::Node> PrimaryInputs() const {
@@ -754,8 +800,7 @@ struct DirectedGraph
             std::vector<Registry::Node> const& edges = adjacency->in;
             bool is_input = edges.empty() ||
                 std::all_of(edges.begin(), edges.end(), [this](Registry::Node edge) {
-                    EdgeTag* tag = registry->ComponentLookup<EdgeTag>(edge);
-                    return tag && *tag == EdgeTag_Secondary;
+                    return EdgeLookup(edge).tag == EdgeTag_Secondary;
                 });
 
             if (is_input)
@@ -774,8 +819,7 @@ struct DirectedGraph
             std::vector<Registry::Node> const& edges = adjacency->out;
             bool is_output = edges.empty() ||
                 std::all_of(edges.begin(), edges.end(), [this](Registry::Node edge) {
-                    EdgeTag* tag = registry->ComponentLookup<EdgeTag>(edge);
-                    return tag && *tag == EdgeTag_Secondary;
+                    return EdgeLookup(edge).tag == EdgeTag_Secondary;
                 });
 
             if (is_output)
@@ -783,6 +827,94 @@ struct DirectedGraph
         }
         return result;
     }
+
+    struct ForwardMixin {
+        static std::vector<Registry::Node> StackInit(DirectedGraph const* _graph) {
+            return _graph->PrimaryInputs(); }
+        static std::vector<Registry::Node> EdgeTraversal(DirectedGraph const* _graph,
+                                                         Registry::Node _node) {
+            return _graph->NodeOutputs(_node); }
+        static Registry::Node EdgeDirection(DirectedGraph::Edge const& _edge) {
+            return _edge.sink; }
+    };
+
+    struct BackwardMixin {
+        static std::vector<Registry::Node> StackInit(DirectedGraph const* _graph) {
+            return _graph->PrimaryOutputs(); }
+        static std::vector<Registry::Node> EdgeTraversal(DirectedGraph const* _graph,
+                                                         Registry::Node _node) {
+            return _graph->NodeInputs(_node); }
+        static Registry::Node EdgeDirection(DirectedGraph::Edge const& _edge) {
+            return _edge.source; }
+    };
+
+    template <typename DirectionMixin>
+    struct NodeIterator {
+        NodeIterator(nullptr_t) {}
+        NodeIterator(DirectedGraph const* _graph)
+            : graph{ _graph }
+            , node_index{ 0 }
+            , repeat_index{ 0 }
+            , node_stack{ DirectionMixin::StackInit(graph) }
+            , queued_nodes(graph->nodes.size(), false)
+        {
+            for (Registry::Node queued_node : node_stack)
+                queued_nodes[graph->NodeIndex(queued_node)] = true;
+        }
+
+        Registry::Node operator*() {
+            return !node_stack.empty() ? node_stack[node_index] : Registry::kInvalidNode;
+        }
+
+        bool operator==(NodeIterator const& _o) const {
+            return graph == _o.graph
+                && node_index == _o.node_index
+                && repeat_index == _o.repeat_index;
+        }
+
+        NodeIterator& operator++() {
+            Registry::Node current_node = **this;
+            if (current_node == Registry::kInvalidNode)
+                return *this;
+
+            ++node_index;
+
+            for (Registry::Node edge_node : DirectionMixin::EdgeTraversal(graph, current_node))
+            {
+                DirectedGraph::Edge edge = graph->EdgeLookup(edge_node);
+                if (edge.tag != DirectedGraph::EdgeTag_Primary)
+                    continue;
+
+                Registry::Node next_node = DirectionMixin::EdgeDirection(edge);
+
+                size_t next_index = graph->NodeIndex(next_node);
+                if (!queued_nodes[next_index])
+                {
+                    node_stack.push_back(next_node);
+                    queued_nodes[next_index] = true;
+                }
+            }
+
+            if (node_index == node_stack.size())
+                *this = NodeIterator{ nullptr };
+
+            return *this;
+        }
+
+        DirectedGraph const* graph = nullptr;
+        size_t node_index = 0;
+        uint32_t repeat_index = 0;
+        std::vector<Registry::Node> node_stack = {};
+        std::vector<bool> queued_nodes = {};
+    };
+
+    using ForwardNodeIterator = NodeIterator<ForwardMixin>;
+    using BackwardNodeIterator = NodeIterator<BackwardMixin>;
+
+    ForwardNodeIterator ForwardTraversal_begin() const { return ForwardNodeIterator{ this }; }
+    ForwardNodeIterator ForwardTraversal_end() const { return ForwardNodeIterator{ nullptr }; }
+    BackwardNodeIterator BackwardTraversal_begin() const { return BackwardNodeIterator{ this }; }
+    BackwardNodeIterator BackwardTraversal_end() const { return BackwardNodeIterator{ nullptr }; }
 
     Registry* registry;
     BijectiveMap<Registry::Node, std::string> name_lookup;
