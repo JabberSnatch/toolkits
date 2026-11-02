@@ -831,45 +831,58 @@ struct DirectedGraph
         return result;
     }
 
-    Registry::Node operator[](std::string const& name) {
+    DirectedGraph& SubgraphCreate(std::string const& parent_node) {
+        Registry::Node node = this->operator[](parent_node);
+        DirectedGraph* output = registry->BindComponent(node, DirectedGraph{ registry });
+        registry->BindComponent(node, output);
+        return *output;
+    }
+
+    void SubgraphBind(std::string const& parent_node, DirectedGraph&& graph) {
+        Registry::Node node = this->operator[](parent_node);
+        DirectedGraph* output = registry->BindComponent(node, std::move(graph));
+        registry->BindComponent(node, output);
+    }
+
+    void SubgraphBind(std::string const& parent_node, DirectedGraph* graph) {
+        Registry::Node node = this->operator[](parent_node);
+        registry->ComponentRequest<DirectedGraph*>(node) = graph;
+        DirectedGraph* stored_graph = registry->ComponentLookup<DirectedGraph>(node);
+        if (stored_graph)
+            registry->ComponentErase(node, stored_graph);
+    }
+
+    DirectedGraph const& SubgraphLookup(Registry::Node node) const {
+        return **registry->ComponentLookup<DirectedGraph*>(node);
+    }
+
+    struct NodeView {
+        operator Registry::Node() const { return node; }
+        NodeView operator[](std::string const& name) const
+        { return graph->SubgraphLookup(node)[name]; }
+        DirectedGraph const* graph;
+        Registry::Node node;
+    };
+
+    NodeView operator[](std::string const& name) {
         dstk::Registry::Node node = dstk::Registry::kInvalidNode;
         if (!name_lookup.contains(name))
             node = NodeCreate(name);
         else
             node = name_lookup[name];
-        return node;
+        return NodeView{ this, node };
     }
 
-    Registry::Node operator[](std::string const& name) const {
+    NodeView operator[](std::string const& name) const {
         if (!name_lookup.contains(name))
-            return dstk::Registry::kInvalidNode;
-        return name_lookup[name];
+            return NodeView{ this, dstk::Registry::kInvalidNode };
+        return NodeView{ this, name_lookup[name] };
     }
-
-    struct ForwardMixin {
-        static std::vector<Registry::Node> StackInit(DirectedGraph const* _graph) {
-            return _graph->PrimaryInputs(); }
-        static std::vector<Registry::Node> EdgeTraversal(DirectedGraph const* _graph,
-                                                         Registry::Node _node) {
-            return _graph->NodeOutputs(_node); }
-        static Registry::Node EdgeDirection(DirectedGraph::Edge const& _edge) {
-            return _edge.sink; }
-    };
-
-    struct BackwardMixin {
-        static std::vector<Registry::Node> StackInit(DirectedGraph const* _graph) {
-            return _graph->PrimaryOutputs(); }
-        static std::vector<Registry::Node> EdgeTraversal(DirectedGraph const* _graph,
-                                                         Registry::Node _node) {
-            return _graph->NodeInputs(_node); }
-        static Registry::Node EdgeDirection(DirectedGraph::Edge const& _edge) {
-            return _edge.source; }
-    };
 
     template <typename DirectionMixin>
-    struct NodeIterator {
-        NodeIterator(nullptr_t) {}
-        NodeIterator(DirectedGraph const* _graph)
+    struct FlatIterator : DirectionMixin {
+        FlatIterator(nullptr_t) {}
+        FlatIterator(DirectedGraph const* _graph)
             : graph{ _graph }
             , node_index{ 0 }
             , repeat_index{ 0 }
@@ -884,13 +897,13 @@ struct DirectedGraph
             return !node_stack.empty() ? node_stack[node_index] : Registry::kInvalidNode;
         }
 
-        bool operator==(NodeIterator const& _o) const {
+        bool operator==(FlatIterator const& _o) const {
             return graph == _o.graph
                 && node_index == _o.node_index
                 && repeat_index == _o.repeat_index;
         }
 
-        NodeIterator& operator++() {
+        FlatIterator& operator++() {
             Registry::Node current_node = **this;
             if (current_node == Registry::kInvalidNode)
                 return *this;
@@ -914,7 +927,7 @@ struct DirectedGraph
             }
 
             if (node_index == node_stack.size())
-                *this = NodeIterator{ nullptr };
+                *this = FlatIterator{ nullptr };
 
             return *this;
         }
@@ -926,93 +939,24 @@ struct DirectedGraph
         std::vector<bool> queued_nodes = {};
     };
 
-    using ForwardNodeIterator = NodeIterator<ForwardMixin>;
-    using BackwardNodeIterator = NodeIterator<BackwardMixin>;
-
-    ForwardNodeIterator ForwardTraversal_begin() const { return ForwardNodeIterator{ this }; }
-    ForwardNodeIterator ForwardTraversal_end() const { return ForwardNodeIterator{ nullptr }; }
-    BackwardNodeIterator BackwardTraversal_begin() const { return BackwardNodeIterator{ this }; }
-    BackwardNodeIterator BackwardTraversal_end() const { return BackwardNodeIterator{ nullptr }; }
-
-    Registry* registry;
-    BijectiveMap<Registry::Node, std::string> name_lookup;
-    std::vector<Registry::Node> nodes;
-    std::vector<Registry::Node> edges;
-};
-
-struct NodeTree
-{
-    void ChildrenInsert(dstk::Registry::Node parent, std::vector<dstk::Registry::Node> children);
-
-    std::vector<dstk::Registry::Node> nodes;
-    std::vector<uint32_t> offsets;
-};
-
-struct LayeredGraph
-{
-    DirectedGraph* root;
-    NodeTree hierarchy;
-
-    DirectedGraph& SubgraphCreate(std::string const& parent_node) {
-        dstk::Registry::Node node = root->operator[](parent_node);
-        DirectedGraph* output =
-            root->registry->BindComponent(node, DirectedGraph{ root->registry });
-        root->registry->BindComponent(node, output);
-        return *output;
-    }
-
-    void SubgraphBind(std::string const& parent_node, DirectedGraph&& graph);
-    void SubgraphBind(Registry::Node node, DirectedGraph* graph) {
-        root->registry->ComponentRequest<DirectedGraph*>(node) = graph;
-
-        DirectedGraph* stored_graph = root->registry->ComponentLookup<DirectedGraph>(node);
-        if (stored_graph)
-            root->registry->ComponentErase(node, stored_graph);
-    }
-    DirectedGraph const& SubgraphLookup(std::string const& name) const;
-
-    struct NodeView {
-        operator Registry::Node() const { return node; }
-        NodeView operator[](std::string const& name) const;
-        DirectedGraph const* graph;
-        Registry::Node node;
-    };
-
-    struct ForwardMixin {
-        using IteratorType = DirectedGraph::ForwardNodeIterator;
-        static IteratorType begin(DirectedGraph const* _graph) {
-            return _graph->ForwardTraversal_begin(); }
-        static IteratorType end(DirectedGraph const* _graph) {
-            return _graph->ForwardTraversal_end(); }
-    };
-
-    struct BackwardMixin {
-        using IteratorType = DirectedGraph::BackwardNodeIterator;
-        static IteratorType begin(DirectedGraph const* _graph) {
-            return _graph->BackwardTraversal_begin(); }
-        static IteratorType end(DirectedGraph const* _graph) {
-            return _graph->BackwardTraversal_end(); }
-    };
-
     template <typename DirectionMixin>
-    struct NodeIterator {
-        NodeIterator(nullptr_t) {}
-        NodeIterator(LayeredGraph const* _graph)
-            : graph{ _graph }
-            , iterator_stack{ DirectionMixin::begin(graph->root) }
+    struct RecursiveIterator : DirectionMixin {
+        RecursiveIterator(nullptr_t) {}
+        RecursiveIterator(DirectedGraph const* _graph)
+            : iterator_stack{ DirectionMixin::FlatBegin(_graph) }
         {}
 
         Registry::Node operator*() {
             return !iterator_stack.empty() ? *iterator_stack.back() : Registry::kInvalidNode;
         }
 
-        bool operator==(NodeIterator const& _o) const {
+        bool operator==(RecursiveIterator const& _o) const {
             return graph == _o.graph
                 && iterator_stack == _o.iterator_stack;
         }
 
-        NodeIterator& operator++() {
-            typename DirectionMixin::IteratorType& iterator = iterator_stack.back();
+        RecursiveIterator& operator++() {
+            typename DirectionMixin::FlatIteratorType& iterator = iterator_stack.back();
 
             Registry::Node current_node = *iterator;
             DirectedGraph** subgraph =
@@ -1022,27 +966,74 @@ struct LayeredGraph
                 iterator_stack.emplace_back(*subgraph);
             else
                 while (!iterator_stack.empty()
-                       && ++iterator_stack.back() == DirectionMixin::end(iterator.graph))
+                       && ++iterator_stack.back() == DirectionMixin::FlatEnd(iterator.graph))
                     iterator_stack.pop_back();
 
             if (iterator_stack.empty())
-                *this = NodeIterator{ nullptr };
+                *this = RecursiveIterator{ nullptr };
 
             return *this;
         }
 
         uint32_t Depth() const { return (uint32_t)iterator_stack.size(); }
-        LayeredGraph const* graph = nullptr;
-        std::vector<typename DirectionMixin::IteratorType> iterator_stack = {};
+        DirectedGraph const* graph = nullptr;
+        std::vector<typename DirectionMixin::FlatIteratorType> iterator_stack = {};
     };
 
-    using ForwardNodeIterator = NodeIterator<ForwardMixin>;
-    using BackwardNodeIterator = NodeIterator<BackwardMixin>;
+    struct ForwardMixin {
+        using FlatIteratorType = FlatIterator<ForwardMixin>;
 
-    ForwardNodeIterator ForwardTraversal_begin() const { return ForwardNodeIterator{ this }; }
-    ForwardNodeIterator ForwardTraversal_end() const { return ForwardNodeIterator{ nullptr }; }
-    BackwardNodeIterator BackwardTraversal_begin() const { return BackwardNodeIterator{ this }; }
-    BackwardNodeIterator BackwardTraversal_end() const { return BackwardNodeIterator{ nullptr }; }
+        FlatIteratorType FlatBegin(DirectedGraph const* _graph)
+        { return FlatIteratorType{ _graph }; }
+        FlatIteratorType FlatEnd(DirectedGraph const* _graph)
+        { return FlatIteratorType{ nullptr }; }
+
+        std::vector<Registry::Node> StackInit(DirectedGraph const* _graph)
+        { return _graph->PrimaryInputs(); }
+        std::vector<Registry::Node> EdgeTraversal(DirectedGraph const* _graph, Registry::Node _node)
+        { return _graph->NodeOutputs(_node); }
+        Registry::Node EdgeDirection(DirectedGraph::Edge const& _edge)
+        { return _edge.sink; }
+    };
+
+    struct BackwardMixin {
+        using FlatIteratorType = FlatIterator<BackwardMixin>;
+
+        FlatIteratorType FlatBegin(DirectedGraph const* _graph)
+        { return FlatIteratorType{ _graph }; }
+        FlatIteratorType FlatEnd(DirectedGraph const* _graph)
+        { return FlatIteratorType{ nullptr }; }
+
+        std::vector<Registry::Node> StackInit(DirectedGraph const* _graph)
+        { return _graph->PrimaryOutputs(); }
+        std::vector<Registry::Node> EdgeTraversal(DirectedGraph const* _graph, Registry::Node _node)
+        { return _graph->NodeInputs(_node); }
+        Registry::Node EdgeDirection(DirectedGraph::Edge const& _edge)
+        { return _edge.source; }
+    };
+
+    template <typename Mixin = ForwardMixin>
+    auto begin(Mixin direction = Mixin{}) const { return RecursiveIterator<Mixin>{ this }; }
+    template <typename Mixin = ForwardMixin>
+    auto end(Mixin direction = Mixin{}) const { return RecursiveIterator<Mixin>{ nullptr }; }
+    auto rbegin() const { return begin(BackwardMixin{}); }
+    auto rend() const { return end(BackwardMixin{}); }
+
+    Registry* registry;
+    BijectiveMap<Registry::Node, std::string> name_lookup;
+    std::vector<Registry::Node> nodes;
+    std::vector<Registry::Node> edges;
+};
+
+struct NodeTree
+{
+    NodeTree(DirectedGraph const& graph) {
+        for (auto it = graph.begin(); it != graph.end(); ++it)
+            nodes.push_back(*it);
+    }
+
+    std::vector<Registry::Node> nodes;
+    std::vector<uint32_t> offsets;
 };
 
 }
