@@ -706,20 +706,31 @@ struct DirectedGraph
         EdgeTag_Secondary,
     };
 
-    struct Edge {
-        EdgeTag tag;
-        Registry::Node source;
-        Registry::Node sink;
+    struct EdgeInfo {
+        EdgeTag tag = EdgeTag_Invalid;
+        Registry::Node source = Registry::kInvalidNode;
+        Registry::Node sink = Registry::kInvalidNode;
     };
 
-    struct NodeAdjacency {
-        std::vector<Registry::Node> in;
-        std::vector<Registry::Node> out;
+    struct NodeInfo {
+        uint32_t repeat_count = 1;
+        std::vector<Registry::Node> edges_in = {};
+        std::vector<Registry::Node> edges_out = {};
     };
 
     DirectedGraph(Registry* _registry = nullptr)
         : registry{ _registry }
     {}
+
+    DirectedGraph(Registry* _registry,
+                  std::vector<std::string> const& _nodes,
+                  std::vector<std::pair<std::string, std::string>> const &_edges)
+        : DirectedGraph{ _registry } {
+        for (std::string const& node : _nodes)
+            NodeCreate(node);
+        for (auto&& pair : _edges)
+            EdgeCreate(pair.first, pair.second);
+    }
 
     DirectedGraph(DirectedGraph const&) = delete;
     DirectedGraph& operator=(DirectedGraph const&) = delete;
@@ -739,6 +750,8 @@ struct DirectedGraph
 
     Registry::Node NodeCreate(std::string const& name = "") {
         Registry::Node node = registry->MakeNode();
+        registry->BindComponent(node, NodeInfo{});
+        registry->BindComponent(node, name);
 
         auto location = std::lower_bound(nodes.begin(), nodes.end(), node);
         assert(location == nodes.end() || *location != node);
@@ -756,15 +769,13 @@ struct DirectedGraph
     }
 
     std::vector<Registry::Node> const& NodeInputs(Registry::Node node) const {
-        static std::vector<Registry::Node> const empty{};
-        NodeAdjacency* adjacency = registry->ComponentLookup<NodeAdjacency>(node);
-        return adjacency != nullptr ? adjacency->in : empty;
+        NodeInfo const& node_info = *registry->ComponentLookup<NodeInfo>(node);
+        return node_info.edges_in;
     }
 
     std::vector<Registry::Node> const& NodeOutputs(Registry::Node node) const {
-        static std::vector<Registry::Node> const empty{};
-        NodeAdjacency* adjacency = registry->ComponentLookup<NodeAdjacency>(node);
-        return adjacency != nullptr ? adjacency->out : empty;
+        NodeInfo const& node_info = *registry->ComponentLookup<NodeInfo>(node);
+        return node_info.edges_out;
     }
 
     Registry::Node EdgeCreate(std::string const& source,
@@ -776,31 +787,24 @@ struct DirectedGraph
         Registry::Node edge = registry->MakeNode();
         edges.push_back(edge);
 
-        {
-            NodeAdjacency& adjacency = registry->ComponentRequest<NodeAdjacency>(source_node);
-            adjacency.out.push_back(edge);
-        }
-        {
-            NodeAdjacency& adjacency = registry->ComponentRequest<NodeAdjacency>(sink_node);
-            adjacency.in.push_back(edge);
-        }
+        NodeInfo& source_info = *registry->ComponentLookup<NodeInfo>(source_node);
+        source_info.edges_out.push_back(edge);
 
-        registry->BindComponent(edge, Edge{ tag, source_node, sink_node });
+        NodeInfo& sink_info = *registry->ComponentLookup<NodeInfo>(sink_node);
+        sink_info.edges_in.push_back(edge);
+
+        registry->BindComponent(edge, EdgeInfo{ tag, source_node, sink_node });
         return edge;
     }
 
-    Edge EdgeLookup(Registry::Node edge) const {
-        return *registry->ComponentLookup<Edge>(edge);
+    EdgeInfo EdgeLookup(Registry::Node edge) const {
+        return *registry->ComponentLookup<EdgeInfo>(edge);
     }
 
     std::vector<Registry::Node> PrimaryInputs() const {
         std::vector<Registry::Node> result = {};
         for (Registry::Node node : nodes) {
-            NodeAdjacency* adjacency = registry->ComponentLookup<NodeAdjacency>(node);
-            if (!adjacency)
-                continue;
-
-            std::vector<Registry::Node> const& edges = adjacency->in;
+            std::vector<Registry::Node> const& edges = NodeInputs(node);
             bool is_input = edges.empty() ||
                 std::all_of(edges.begin(), edges.end(), [this](Registry::Node edge) {
                     return EdgeLookup(edge).tag == EdgeTag_Secondary;
@@ -815,11 +819,7 @@ struct DirectedGraph
     std::vector<Registry::Node> PrimaryOutputs() const {
         std::vector<Registry::Node> result = {};
         for (Registry::Node node : nodes) {
-            NodeAdjacency* adjacency = registry->ComponentLookup<NodeAdjacency>(node);
-            if (!adjacency)
-                continue;
-
-            std::vector<Registry::Node> const& edges = adjacency->out;
+            std::vector<Registry::Node> const& edges = NodeOutputs(node);
             bool is_output = edges.empty() ||
                 std::all_of(edges.begin(), edges.end(), [this](Registry::Node edge) {
                     return EdgeLookup(edge).tag == EdgeTag_Secondary;
@@ -831,52 +831,19 @@ struct DirectedGraph
         return result;
     }
 
-    DirectedGraph& SubgraphCreate(std::string const& parent_node) {
-        Registry::Node node = this->operator[](parent_node);
-        DirectedGraph* output = registry->BindComponent(node, DirectedGraph{ registry });
-        registry->BindComponent(node, output);
-        return *output;
-    }
-
-    void SubgraphBind(std::string const& parent_node, DirectedGraph&& graph) {
-        Registry::Node node = this->operator[](parent_node);
-        DirectedGraph* output = registry->BindComponent(node, std::move(graph));
-        registry->BindComponent(node, output);
-    }
-
-    void SubgraphBind(std::string const& parent_node, DirectedGraph* graph) {
-        Registry::Node node = this->operator[](parent_node);
-        registry->ComponentRequest<DirectedGraph*>(node) = graph;
-        DirectedGraph* stored_graph = registry->ComponentLookup<DirectedGraph>(node);
-        if (stored_graph)
-            registry->ComponentErase(node, stored_graph);
-    }
-
-    DirectedGraph const& SubgraphLookup(Registry::Node node) const {
-        return **registry->ComponentLookup<DirectedGraph*>(node);
-    }
-
-    struct NodeView {
-        operator Registry::Node() const { return node; }
-        NodeView operator[](std::string const& name) const
-        { return graph->SubgraphLookup(node)[name]; }
-        DirectedGraph const* graph;
-        Registry::Node node;
-    };
-
-    NodeView operator[](std::string const& name) {
-        dstk::Registry::Node node = dstk::Registry::kInvalidNode;
+    Registry::Node operator[](std::string const& name) {
+        Registry::Node node = Registry::kInvalidNode;
         if (!name_lookup.contains(name))
             node = NodeCreate(name);
         else
             node = name_lookup[name];
-        return NodeView{ this, node };
+        return node;
     }
 
-    NodeView operator[](std::string const& name) const {
+    Registry::Node operator[](std::string const& name) const {
         if (!name_lookup.contains(name))
-            return NodeView{ this, dstk::Registry::kInvalidNode };
-        return NodeView{ this, name_lookup[name] };
+            return Registry::kInvalidNode;
+        return name_lookup[name];
     }
 
     template <typename DirectionMixin>
@@ -912,7 +879,7 @@ struct DirectedGraph
 
             for (Registry::Node edge_node : DirectionMixin::EdgeTraversal(graph, current_node))
             {
-                DirectedGraph::Edge edge = graph->EdgeLookup(edge_node);
+                DirectedGraph::EdgeInfo edge = graph->EdgeLookup(edge_node);
                 if (edge.tag != DirectedGraph::EdgeTag_Primary)
                     continue;
 
@@ -992,7 +959,7 @@ struct DirectedGraph
         { return _graph->PrimaryInputs(); }
         std::vector<Registry::Node> EdgeTraversal(DirectedGraph const* _graph, Registry::Node _node)
         { return _graph->NodeOutputs(_node); }
-        Registry::Node EdgeDirection(DirectedGraph::Edge const& _edge)
+        Registry::Node EdgeDirection(DirectedGraph::EdgeInfo const& _edge)
         { return _edge.sink; }
     };
 
@@ -1008,7 +975,7 @@ struct DirectedGraph
         { return _graph->PrimaryOutputs(); }
         std::vector<Registry::Node> EdgeTraversal(DirectedGraph const* _graph, Registry::Node _node)
         { return _graph->NodeInputs(_node); }
-        Registry::Node EdgeDirection(DirectedGraph::Edge const& _edge)
+        Registry::Node EdgeDirection(DirectedGraph::EdgeInfo const& _edge)
         { return _edge.source; }
     };
 
@@ -1019,10 +986,85 @@ struct DirectedGraph
     auto rbegin() const { return begin(BackwardMixin{}); }
     auto rend() const { return end(BackwardMixin{}); }
 
-    Registry* registry;
-    BijectiveMap<Registry::Node, std::string> name_lookup;
-    std::vector<Registry::Node> nodes;
-    std::vector<Registry::Node> edges;
+    Registry* registry = nullptr;
+    BijectiveMap<Registry::Node, std::string> name_lookup = {};
+    std::vector<Registry::Node> nodes = {};
+    std::vector<Registry::Node> edges = {};
+};
+
+struct LayeredGraph
+{
+    Registry* registry = nullptr;
+    DirectedGraph root;
+
+    template <typename T>
+    struct NodeViewBase {
+        operator Registry::Node() const { return node; }
+        LayeredGraph const* root;
+        Registry* registry;
+        Registry::Node node;
+
+        T operator[](char const* name) const {
+            return this->operator[](std::string(name));
+        }
+
+        T operator[](std::string const& name) const {
+            auto&& graph = ((T const*)this)->SubgraphLookup();
+            return T{ root, graph.registry, graph[name] };
+        }
+    };
+
+    struct ConstNodeView : public NodeViewBase<ConstNodeView> {
+        DirectedGraph const& SubgraphLookup() const {
+            return **registry->ComponentLookup<DirectedGraph*>(node);
+        }
+    };
+
+    struct NodeView : public NodeViewBase<NodeView> {
+        NodeView& operator=(DirectedGraph* _graph) {
+            registry->ComponentRequest<DirectedGraph*>(node) = _graph;
+            DirectedGraph* stored_graph =
+                registry->ComponentLookup<DirectedGraph>(node);
+            if (stored_graph)
+                registry->ComponentErase(node, stored_graph);
+            return *this;
+        }
+
+        NodeView& operator=(DirectedGraph&& _graph) {
+            DirectedGraph* output =
+                registry->BindComponent(node, std::move(_graph));
+            registry->BindComponent(node, output);
+            return *this;
+        }
+
+        NodeView& operator=(LayeredGraph&& _graph) {
+            *this = std::move(_graph.root);
+            return *this;
+        }
+
+        DirectedGraph& SubgraphLookup() const {
+            DirectedGraph** output =
+                registry->ComponentLookup<DirectedGraph*>(node);
+            if (!output)
+                return SubgraphCreate();
+            return **output;
+        }
+
+        DirectedGraph& SubgraphCreate() const {
+            DirectedGraph* subgraph =
+                registry->BindComponent(node, DirectedGraph{ registry });
+            registry->BindComponent(node, subgraph);
+            return *subgraph;
+        }
+    };
+
+    NodeView operator[](std::string const& name) {
+        return NodeView{ this, root.registry, root[name] };
+    }
+
+    ConstNodeView operator[](std::string const& name) const {
+        return ConstNodeView{ this, root.registry, root[name] };
+    }
 };
 
 struct NodeTree
