@@ -778,6 +778,17 @@ struct DirectedGraph
         return node_info.edges_out;
     }
 
+    static uint32_t& NodeRepeatCount(Registry* registry, Registry::Node node) {
+        return registry->ComponentLookup<NodeInfo>(node)->repeat_count;
+    }
+
+    uint32_t const& NodeRepeatCount(Registry::Node node) const {
+        return DirectedGraph::NodeRepeatCount(registry, node);
+    }
+    uint32_t& NodeRepeatCount(Registry::Node node) {
+        return const_cast<uint32_t&>(((DirectedGraph const*)this)->NodeRepeatCount(node));
+    }
+
     Registry::Node EdgeCreate(std::string const& source,
                               std::string const& sink,
                               EdgeTag tag = EdgeTag_Primary) {
@@ -846,8 +857,8 @@ struct DirectedGraph
         return name_lookup[name];
     }
 
-    template <typename DirectionMixin>
-    struct FlatIterator : DirectionMixin {
+    template <typename DirectionMixin, typename LoopMixin>
+    struct FlatIterator : DirectionMixin, LoopMixin {
         FlatIterator(nullptr_t) {}
         FlatIterator(DirectedGraph const* _graph)
             : graph{ _graph }
@@ -858,6 +869,7 @@ struct DirectedGraph
         {
             for (Registry::Node queued_node : node_stack)
                 queued_nodes[graph->NodeIndex(queued_node)] = true;
+            repeat_count = LoopMixin::RepeatCount(graph->registry, **this);
         }
 
         Registry::Node operator*() {
@@ -875,8 +887,6 @@ struct DirectedGraph
             if (current_node == Registry::kInvalidNode)
                 return *this;
 
-            ++node_index;
-
             for (Registry::Node edge_node : DirectionMixin::EdgeTraversal(graph, current_node))
             {
                 DirectedGraph::EdgeInfo edge = graph->EdgeLookup(edge_node);
@@ -893,68 +903,49 @@ struct DirectedGraph
                 }
             }
 
-            if (node_index == node_stack.size())
-                *this = FlatIterator{ nullptr };
+            ++repeat_index;
+            while (repeat_index >= repeat_count)
+            {
+                ++node_index;
+                if (node_index < node_stack.size())
+                {
+                    repeat_count = LoopMixin::RepeatCount(graph->registry, **this);
+                    repeat_index = 0;
+                }
+                else
+                {
+                    *this = FlatIterator{ nullptr };
+                    break;
+                }
+            }
 
             return *this;
         }
+
+        static FlatIterator begin(DirectedGraph const* _graph)
+        { return FlatIterator{ _graph }; }
+        static FlatIterator end()
+        { return FlatIterator{ nullptr }; }
 
         DirectedGraph const* graph = nullptr;
         size_t node_index = 0;
         uint32_t repeat_index = 0;
+        uint32_t repeat_count = 0;
         std::vector<Registry::Node> node_stack = {};
         std::vector<bool> queued_nodes = {};
     };
 
-    template <typename DirectionMixin>
-    struct RecursiveIterator : DirectionMixin {
-        RecursiveIterator(nullptr_t) {}
-        RecursiveIterator(DirectedGraph const* _graph)
-            : iterator_stack{ DirectionMixin::FlatBegin(_graph) }
-        {}
+    struct RepeatMixin {
+        uint32_t RepeatCount(Registry const* _registry, Registry::Node _node)
+        { return _registry->ComponentLookup<NodeInfo>(_node)->repeat_count; }
+    };
 
-        Registry::Node operator*() {
-            return !iterator_stack.empty() ? *iterator_stack.back() : Registry::kInvalidNode;
-        }
-
-        bool operator==(RecursiveIterator const& _o) const {
-            return graph == _o.graph
-                && iterator_stack == _o.iterator_stack;
-        }
-
-        RecursiveIterator& operator++() {
-            typename DirectionMixin::FlatIteratorType& iterator = iterator_stack.back();
-
-            Registry::Node current_node = *iterator;
-            DirectedGraph** subgraph =
-                iterator.graph->registry->ComponentLookup<DirectedGraph*>(current_node);
-
-            if (subgraph)
-                iterator_stack.emplace_back(*subgraph);
-            else
-                while (!iterator_stack.empty()
-                       && ++iterator_stack.back() == DirectionMixin::FlatEnd(iterator.graph))
-                    iterator_stack.pop_back();
-
-            if (iterator_stack.empty())
-                *this = RecursiveIterator{ nullptr };
-
-            return *this;
-        }
-
-        uint32_t Depth() const { return (uint32_t)iterator_stack.size(); }
-        DirectedGraph const* graph = nullptr;
-        std::vector<typename DirectionMixin::FlatIteratorType> iterator_stack = {};
+    struct SinglePassMixin {
+        uint32_t RepeatCount(Registry const* _registry, Registry::Node _node)
+        { return 1; }
     };
 
     struct ForwardMixin {
-        using FlatIteratorType = FlatIterator<ForwardMixin>;
-
-        FlatIteratorType FlatBegin(DirectedGraph const* _graph)
-        { return FlatIteratorType{ _graph }; }
-        FlatIteratorType FlatEnd(DirectedGraph const* _graph)
-        { return FlatIteratorType{ nullptr }; }
-
         std::vector<Registry::Node> StackInit(DirectedGraph const* _graph)
         { return _graph->PrimaryInputs(); }
         std::vector<Registry::Node> EdgeTraversal(DirectedGraph const* _graph, Registry::Node _node)
@@ -964,13 +955,6 @@ struct DirectedGraph
     };
 
     struct BackwardMixin {
-        using FlatIteratorType = FlatIterator<BackwardMixin>;
-
-        FlatIteratorType FlatBegin(DirectedGraph const* _graph)
-        { return FlatIteratorType{ _graph }; }
-        FlatIteratorType FlatEnd(DirectedGraph const* _graph)
-        { return FlatIteratorType{ nullptr }; }
-
         std::vector<Registry::Node> StackInit(DirectedGraph const* _graph)
         { return _graph->PrimaryOutputs(); }
         std::vector<Registry::Node> EdgeTraversal(DirectedGraph const* _graph, Registry::Node _node)
@@ -979,12 +963,16 @@ struct DirectedGraph
         { return _edge.source; }
     };
 
-    template <typename Mixin = ForwardMixin>
-    auto begin(Mixin direction = Mixin{}) const { return RecursiveIterator<Mixin>{ this }; }
-    template <typename Mixin = ForwardMixin>
-    auto end(Mixin direction = Mixin{}) const { return RecursiveIterator<Mixin>{ nullptr }; }
-    auto rbegin() const { return begin(BackwardMixin{}); }
-    auto rend() const { return end(BackwardMixin{}); }
+    template <typename DirectionMixin = DirectedGraph::ForwardMixin, typename LoopMixin = DirectedGraph::RepeatMixin>
+    auto begin(DirectionMixin = DirectionMixin{}, LoopMixin = LoopMixin{}) const
+    { return FlatIterator<DirectionMixin, LoopMixin>{ this }; }
+    template <typename DirectionMixin = DirectedGraph::ForwardMixin, typename LoopMixin = DirectedGraph::RepeatMixin>
+    auto end(DirectionMixin = DirectionMixin{}, LoopMixin = LoopMixin{}) const
+    { return FlatIterator<DirectionMixin, LoopMixin>{ nullptr }; }
+    auto rbegin() const
+    { return begin(DirectedGraph::BackwardMixin{}, DirectedGraph::SinglePassMixin{}); }
+    auto rend() const
+    { return end(DirectedGraph::BackwardMixin{}, DirectedGraph::SinglePassMixin{}); }
 
     Registry* registry = nullptr;
     BijectiveMap<Registry::Node, std::string> name_lookup = {};
@@ -1015,12 +1003,20 @@ struct LayeredGraph
     };
 
     struct ConstNodeView : public NodeViewBase<ConstNodeView> {
+        uint32_t const& NodeRepeatCount() const {
+            return DirectedGraph::NodeRepeatCount(registry, node);
+        }
+
         DirectedGraph const& SubgraphLookup() const {
             return **registry->ComponentLookup<DirectedGraph*>(node);
         }
     };
 
     struct NodeView : public NodeViewBase<NodeView> {
+        uint32_t& NodeRepeatCount() const {
+            return DirectedGraph::NodeRepeatCount(registry, node);
+        }
+
         NodeView& operator=(DirectedGraph* _graph) {
             registry->ComponentRequest<DirectedGraph*>(node) = _graph;
             DirectedGraph* stored_graph =
@@ -1065,6 +1061,58 @@ struct LayeredGraph
     ConstNodeView operator[](std::string const& name) const {
         return ConstNodeView{ this, root.registry, root[name] };
     }
+
+    template <typename FlatIteratorType>
+    struct RecursiveIterator {
+        RecursiveIterator(nullptr_t) {}
+        RecursiveIterator(DirectedGraph const* _graph)
+            : iterator_stack{ FlatIteratorType::begin(_graph) }
+        {}
+
+        Registry::Node operator*() {
+            return !iterator_stack.empty() ? *iterator_stack.back() : Registry::kInvalidNode;
+        }
+
+        bool operator==(RecursiveIterator const& _o) const {
+            return graph == _o.graph
+                && iterator_stack == _o.iterator_stack;
+        }
+
+        RecursiveIterator& operator++() {
+            FlatIteratorType& iterator = iterator_stack.back();
+
+            Registry::Node current_node = *iterator;
+            DirectedGraph** subgraph =
+                iterator.graph->registry->ComponentLookup<DirectedGraph*>(current_node);
+
+            if (subgraph)
+                iterator_stack.emplace_back(*subgraph);
+            else
+                while (!iterator_stack.empty()
+                       && ++iterator_stack.back() == FlatIteratorType::end())
+                    iterator_stack.pop_back();
+
+            if (iterator_stack.empty())
+                *this = RecursiveIterator{ nullptr };
+
+            return *this;
+        }
+
+        uint32_t Depth() const { return (uint32_t)iterator_stack.size(); }
+        DirectedGraph const* graph = nullptr;
+        std::vector<FlatIteratorType> iterator_stack = {};
+    };
+
+    template <typename DirectionMixin = DirectedGraph::ForwardMixin, typename LoopMixin = DirectedGraph::RepeatMixin>
+    auto begin(DirectionMixin = DirectionMixin{}, LoopMixin = LoopMixin{}) const
+    { return RecursiveIterator<DirectedGraph::FlatIterator<DirectionMixin, LoopMixin>>{ &root }; }
+    template <typename DirectionMixin = DirectedGraph::ForwardMixin, typename LoopMixin = DirectedGraph::RepeatMixin>
+    auto end(DirectionMixin = DirectionMixin{}, LoopMixin = LoopMixin{}) const
+    { return RecursiveIterator<DirectedGraph::FlatIterator<DirectionMixin, LoopMixin>>{ nullptr }; }
+    auto rbegin() const
+    { return begin(DirectedGraph::BackwardMixin{}, DirectedGraph::SinglePassMixin{}); }
+    auto rend() const
+    { return end(DirectedGraph::BackwardMixin{}, DirectedGraph::SinglePassMixin{}); }
 };
 
 struct NodeTree
