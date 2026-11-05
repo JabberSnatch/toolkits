@@ -982,8 +982,15 @@ struct DirectedGraph
 
 struct LayeredGraph
 {
-    Registry* registry = nullptr;
-    DirectedGraph root;
+    LayeredGraph(Registry* _registry)
+        : registry{ _registry }
+        , root{ _registry }
+    {}
+
+    LayeredGraph(DirectedGraph&& _root)
+        : registry{ _root.registry }
+        , root{ std::move(_root) }
+    {}
 
     template <typename T>
     struct NodeViewBase {
@@ -1052,6 +1059,11 @@ struct LayeredGraph
             registry->BindComponent(node, subgraph);
             return *subgraph;
         }
+
+        Registry::Node NodeCreate(std::string const& name = "") {
+            Registry::Node node = SubgraphLookup().NodeCreate(name);
+            return node;
+        }
     };
 
     NodeView operator[](std::string const& name) {
@@ -1109,22 +1121,55 @@ struct LayeredGraph
     template <typename DirectionMixin = DirectedGraph::ForwardMixin, typename LoopMixin = DirectedGraph::RepeatMixin>
     auto end(DirectionMixin = DirectionMixin{}, LoopMixin = LoopMixin{}) const
     { return RecursiveIterator<DirectedGraph::FlatIterator<DirectionMixin, LoopMixin>>{ nullptr }; }
+
+    auto sbegin() const
+    { return begin(DirectedGraph::ForwardMixin{}, DirectedGraph::SinglePassMixin{}); }
+    auto send() const
+    { return end(DirectedGraph::ForwardMixin{}, DirectedGraph::SinglePassMixin{}); }
+
     auto rbegin() const
     { return begin(DirectedGraph::BackwardMixin{}, DirectedGraph::SinglePassMixin{}); }
     auto rend() const
     { return end(DirectedGraph::BackwardMixin{}, DirectedGraph::SinglePassMixin{}); }
+
+    Registry* registry = nullptr;
+    DirectedGraph root;
 };
 
+#if 0
 struct NodeTree
 {
-    NodeTree(DirectedGraph const& graph) {
-        for (auto it = graph.begin(); it != graph.end(); ++it)
+    NodeTree(LayeredGraph const& graph) {
+        uint32_t current_depth = 0;
+        std::vector<uint32_t> stack = {};
+
+        for (auto it = graph.sbegin(); it != graph.send(); ++it) {
+            if (current_depth != it.Depth()) {
+
+                if (current_depth < it.Depth())
+                    stack.push_back(nodes.size());
+
+                if (current_depth > it.Depth())
+                    stack.pop_back();
+
+                current_depth = it.Depth();
+            }
+
+            size_t current_index = nodes.size();
+            size_t previous_node_offset = current_index - stack.back();
+
+            offsets.push_back(0);
+            offsets[stack.back()] = previous_node_offset;
+            stack.back() = current_index;
             nodes.push_back(*it);
+            index_map[*it] = (uint32_t)current_index;
+        }
     }
 
     std::vector<Registry::Node> nodes;
     std::vector<uint32_t> offsets;
 };
+#endif
 
 }
 

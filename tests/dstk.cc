@@ -27,9 +27,7 @@ int main()
         std::cout << root_graph.name_lookup[*it] << std::endl;
     std::cout << std::endl;
 
-    dstk::LayeredGraph test_graph0 = {};
-    test_graph0.registry = &registry;
-    test_graph0.root = std::move(root_graph);
+    dstk::LayeredGraph test_graph0{ std::move(root_graph) };
 
     dstk::DirectedGraph& subgraph0 = test_graph0["C"].SubgraphCreate();
     subgraph0.NodeCreate("G");
@@ -74,13 +72,14 @@ int main()
     }
     std::cout << std::endl;
 
-    dstk::LayeredGraph test_graph1 = {};
-    test_graph1.registry = &registry;
-    test_graph1.root = dstk::DirectedGraph{
-        &registry,
-        { "O", "P", "Q", "R" },
-        { { "O", "P" }, { "O", "Q" }, { "P", "R" }, { "Q", "R" } }
+    dstk::LayeredGraph test_graph1{
+        {
+            &registry,
+            { "O", "P", "Q", "R" },
+            { { "O", "P" }, { "O", "Q" }, { "P", "R" }, { "Q", "R" } }
+        }
     };
+
     test_graph1["P"] = std::move(test_graph0);
     test_graph1["P"].NodeRepeatCount() = 3;
 
@@ -101,6 +100,16 @@ int main()
     for (auto name : registry.ComponentGlobalLookup<std::string>())
         std::cout << *name << std::endl;
     std::cout << std::endl;
+
+    dstk::LayeredGraph test_graph2{
+        { &registry, { "A", "B", "C", "F" }, { { "A", "B" }, { "B", "C" }, { "C", "F" } } },
+    };
+    test_graph2["B"] = dstk::DirectedGraph{ &registry, { "D", "E" }, { { "D", "E" } } };
+
+#if 0
+    dstk::NodeTree tree2{ test_graph2 };
+    dstk::NodeTree tree1{ test_graph1 };
+#endif
 
     return 0;
 }
